@@ -48,6 +48,7 @@ export interface CreateBoxArgs {
   image?: string;
   autoRemove?: boolean;
   autoStop?: number;
+  autoDelete?: number;
   entrypoint?: string[];
   network?: NetworkConfig;
 }

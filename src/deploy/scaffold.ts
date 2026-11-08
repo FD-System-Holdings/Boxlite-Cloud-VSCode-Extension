@@ -33,6 +33,26 @@ export async function scaffoldNewProject(): Promise<void> {
   }
 
   const appDir = path.join(targetDir, 'app');
+
+  // Guard against accidental data loss
+  const filesToCheck = [
+    path.join(targetDir, 'boxlite.json'),
+    path.join(appDir, 'server.py'),
+    path.join(appDir, 'index.html')
+  ];
+  const existing = filesToCheck.filter((p) => fs.existsSync(p));
+  if (existing.length > 0) {
+    const existingNames = existing.map((p) => path.relative(targetDir, p)).join(', ');
+    const choice = await vscode.window.showWarningMessage(
+      `The directory already contains BoxLite files (${existingNames}). Overwrite them?`,
+      { modal: true },
+      'Overwrite'
+    );
+    if (choice !== 'Overwrite') {
+      return;
+    }
+  }
+
   if (!fs.existsSync(appDir)) {
     fs.mkdirSync(appDir, { recursive: true });
   }

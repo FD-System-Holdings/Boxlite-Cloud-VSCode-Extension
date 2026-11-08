@@ -24,4 +24,10 @@ describe('Error Diagnostics (§5 Table Mapping)', () => {
     assert.strictEqual(diag.summary.includes('Network Error'), true);
     assert.strictEqual(diag.checklist.some((item) => item.includes('BOXLITE_REST_URL')), true);
   });
+
+  it('should diagnose 400 bad request / schema validation errors', () => {
+    const diag = diagnoseError('BoxLite Cloud API error (400): property auto_remove should not exist');
+    assert.strictEqual(diag.summary.includes('400'), true);
+    assert.strictEqual(diag.checklist.some((item) => item.includes('auto_remove')), true);
+  });
 });

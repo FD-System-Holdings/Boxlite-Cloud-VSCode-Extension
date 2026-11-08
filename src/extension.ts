@@ -68,8 +68,4 @@ export async function activate(context: vscode.ExtensionContext) {
   outputChannel.appendLine('[boxlite] BoxLite extension activated successfully.');
 }
 
-export function deactivate() {
-  if (statusBarItem) {
-    statusBarItem.dispose();
-  }
-}
+export function deactivate() {}

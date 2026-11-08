@@ -43,6 +43,14 @@ export const DEFAULT_CONFIG: BoxliteProjectConfig = {
   autoStop: 0
 };
 
+export function buildSupervisorEntrypoint(startCmd: string = 'python3 -u server.py'): string[] {
+  return [
+    'sh',
+    '-c',
+    `while true; do if [ -d /app ] && [ "$(ls -A /app 2>/dev/null)" ]; then cd /app && ${startCmd} >>/tmp/server.log 2>&1; fi; sleep 2; done`
+  ];
+}
+
 export class ProjectManager {
   public static async findProjectConfig(
     folderUri?: vscode.Uri

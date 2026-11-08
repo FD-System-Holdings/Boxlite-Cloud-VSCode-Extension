@@ -14,6 +14,7 @@ import {
 import { CredentialsManager } from '../auth/credentials';
 import { PythonEnvManager } from './env';
 import { diagnoseError } from '../util/diagnosis';
+import { parseExecutableCommand } from '../util/process';
 
 export class BoxLiteBridgeClient implements vscode.Disposable {
   private process: ChildProcess | null = null;
@@ -71,12 +72,12 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
         ...process.env,
         BOXLITE_API_KEY: apiKey || '',
         BOXLITE_REST_URL: restUrl,
-        PYTHONUNBUFFERED: '1'
+        PYTHONUNBUFFERED: '1',
+        PYTHONUTF8: '1'
       };
 
-      const parts = pythonPath.split(' ');
-      const bin = parts[0];
-      const args = parts.slice(1).concat([scriptPath]);
+      const { bin, args: parsedArgs } = parseExecutableCommand(pythonPath);
+      const args = parsedArgs.concat([scriptPath]);
 
       this.outputChannel.appendLine(`[bridge] Starting python bridge: ${bin} ${args.join(' ')}`);
 
@@ -127,7 +128,7 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
     }
 
     try {
-      const res: BridgeResponse = jsonParseSafe(trimmed);
+      const res: BridgeResponse = JSON.parse(trimmed);
       if (res && res.id) {
         const pending = this.pendingRequests.get(res.id);
         if (pending) {
@@ -177,25 +178,13 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
       } else {
         clearTimeout(timer);
         this.pendingRequests.delete(reqId);
+        this.process = null;
         reject(new Error('Bridge stdin is closed'));
       }
     });
   }
 
   // BoxLite Cloud API Methods
-  public async ping(): Promise<boolean> {
-    try {
-      const res = await this.sendRequest<{ pong: boolean }>('ping', {}, 5000);
-      return res?.pong === true;
-    } catch {
-      return false;
-    }
-  }
-
-  public async checkCredentials(): Promise<{ valid: boolean; boxCount: number }> {
-    return this.sendRequest('check_credentials', {}, 15000);
-  }
-
   public async listBoxes(): Promise<BoxListItem[]> {
     const res = await this.sendRequest<{ boxes: BoxListItem[] }>('list_boxes', {}, 20000);
     return res.boxes || [];
@@ -267,8 +256,4 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
     this.restartBridge();
     this.rejectAllPending(new Error('Bridge disposed'));
   }
-}
-
-function jsonParseSafe(str: string): any {
-  return JSON.parse(str);
 }

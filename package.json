@@ -20,9 +20,7 @@
     "containers",
     "serverless"
   ],
-  "activationEvents": [
-    "onView:boxlite.boxesView"
-  ],
+  "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -151,6 +149,12 @@
         "title": "Stream Logs",
         "category": "BoxLite",
         "icon": "$(output)"
+      },
+      {
+        "command": "boxlite.stopLogs",
+        "title": "Stop Streaming Logs",
+        "category": "BoxLite",
+        "icon": "$(close)"
       },
       {
         "command": "boxlite.execCommand",
@@ -293,11 +297,15 @@
     "test": "tsc -p ./tsconfig.test.json && mocha -r test/mock-vscode.js out/test/**/*.test.js"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/mocha": "^10.0.6",
-    "@types/node": "^20.11.0",
+    "@types/node": "^20.19.43",
     "@types/vscode": "^1.80.0",
-    "esbuild": "^0.20.0",
-    "mocha": "^10.3.0",
+    "esbuild": "^0.28.2",
+    "mocha": "^11.0.0",
     "typescript": "^5.3.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
   }
 }

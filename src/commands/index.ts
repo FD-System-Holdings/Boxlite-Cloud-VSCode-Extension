@@ -6,6 +6,7 @@ import { BoxesTreeDataProvider } from '../tree/boxesProvider';
 import { BoxTreeItem } from '../tree/nodes';
 import { BoxLiteDeployer } from '../deploy/deployer';
 import { scaffoldNewProject } from '../deploy/scaffold';
+import { buildSupervisorEntrypoint } from '../deploy/project';
 import { LogStreamManager } from '../logs/logStream';
 import { validateNetworkPolicy, validateAllowlistRule } from '../util/validation';
 import { diagnoseError } from '../util/diagnosis';
@@ -108,16 +109,14 @@ export function registerCommands(
         { location: vscode.ProgressLocation.Notification, title: `Creating Box ${name}...` },
         async () => {
           try {
-            const supervisor = [
-              'sh',
-              '-c',
-              'while true; do if [ -f /app/server.py ]; then cd /app && python3 -u server.py >>/tmp/server.log 2>&1; fi; sleep 2; done'
-            ];
+            const config = vscode.workspace.getConfiguration('boxlite');
+            const defaultAutoStop = config.get<number>('autoStop', 0);
+            const supervisor = buildSupervisorEntrypoint();
             const res = await bridge.createBox({
               name: name.trim(),
               image: (image && image.trim()) || 'python',
               autoRemove: false,
-              autoStop: 0,
+              autoStop: defaultAutoStop,
               entrypoint: supervisor,
               network: {
                 inbound: { mode: 'enabled' },
@@ -128,7 +127,8 @@ export function registerCommands(
             treeProvider.refresh();
           } catch (e: any) {
             const diag = diagnoseError(e.message);
-            vscode.window.showErrorMessage(`Failed to create Box: ${e.message}\nDiagnosis: ${diag.summary}`);
+            const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
+            vscode.window.showErrorMessage(`Failed to create Box: ${msg}`);
           }
         }
       );
@@ -170,6 +170,7 @@ export function registerCommands(
         async () => {
           try {
             await bridge.stopBox(boxId);
+            logManager.stopStreaming(boxId);
             vscode.window.showInformationMessage(`Box stopped successfully.`);
             treeProvider.refresh();
           } catch (e: any) {
@@ -239,8 +240,16 @@ export function registerCommands(
 
   // 9. URLs & Tunnels
   context.subscriptions.push(
-    vscode.commands.registerCommand('boxlite.openUrl', async (item?: BoxTreeItem) => {
-      const url = await resolveBoxUrl(item, bridge);
+    vscode.commands.registerCommand('boxlite.openUrl', async (itemOrUrl?: BoxTreeItem | string, maybeUrl?: string) => {
+      let url: string | undefined;
+      if (typeof itemOrUrl === 'string') {
+        url = itemOrUrl;
+      } else if (typeof maybeUrl === 'string') {
+        url = maybeUrl;
+      } else {
+        url = await resolveBoxUrl(itemOrUrl, bridge);
+      }
+
       if (url) {
         vscode.env.openExternal(vscode.Uri.parse(url));
       } else {
@@ -250,8 +259,16 @@ export function registerCommands(
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('boxlite.copyUrl', async (item?: BoxTreeItem) => {
-      const url = await resolveBoxUrl(item, bridge);
+    vscode.commands.registerCommand('boxlite.copyUrl', async (itemOrUrl?: BoxTreeItem | string, maybeUrl?: string) => {
+      let url: string | undefined;
+      if (typeof itemOrUrl === 'string') {
+        url = itemOrUrl;
+      } else if (typeof maybeUrl === 'string') {
+        url = maybeUrl;
+      } else {
+        url = await resolveBoxUrl(itemOrUrl, bridge);
+      }
+
       if (url) {
         await vscode.env.clipboard.writeText(url);
         vscode.window.showInformationMessage('URL copied to clipboard.');
@@ -295,7 +312,8 @@ export function registerCommands(
         return;
       }
 
-      const port = 8080;
+      const config = vscode.workspace.getConfiguration('boxlite');
+      const port = config.get<number>('defaultPort', 8080);
 
       try {
         if (choice.label.startsWith('Public')) {
@@ -400,6 +418,17 @@ export function registerCommands(
     })
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.stopLogs', async (item?: BoxTreeItem) => {
+      const boxId = await resolveBoxId(item, bridge);
+      if (!boxId) {
+        return;
+      }
+      logManager.stopStreaming(boxId);
+      vscode.window.showInformationMessage(`Stopped streaming logs for Box ${boxId.substring(0, 8)}.`);
+    })
+  );
+
   // 12. Exec Command
   context.subscriptions.push(
     vscode.commands.registerCommand('boxlite.execCommand', async (item?: BoxTreeItem) => {
@@ -417,15 +446,11 @@ export function registerCommands(
         return;
       }
 
-      const parts = cmdInput.trim().split(' ');
-      const bin = parts[0];
-      const args = parts.slice(1);
-
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Executing "${cmdInput}"...` },
         async () => {
           try {
-            const res = await bridge.exec(boxId, bin, args);
+            const res = await bridge.exec(boxId, 'sh', ['-c', cmdInput.trim()]);
             const doc = await vscode.workspace.openTextDocument({
               content: `=== Execution Result ===\nCommand: ${cmdInput}\nExit Code: ${res.exitCode}\n\n--- Standard Output ---\n${res.stdout}\n\n--- Standard Error ---\n${res.stderr}`,
               language: 'text'

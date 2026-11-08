@@ -15,8 +15,11 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
-# Ensure standard output is unbuffered
-sys.stdout.reconfigure(line_buffering=True)
+# Ensure standard output and input are UTF-8 encoded and unbuffered
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True, encoding="utf-8")
+if hasattr(sys.stdin, "reconfigure"):
+    sys.stdin.reconfigure(encoding="utf-8")
 
 
 def log_debug(msg: str):
@@ -30,15 +33,6 @@ def send_response(req_id: str, success: bool, data: Any = None, error: Optional[
         "success": success,
         "data": data,
         "error": error
-    }
-    sys.stdout.write(json.dumps(payload) + "\n")
-    sys.stdout.flush()
-
-
-def send_event(event_name: str, data: Any = None):
-    payload = {
-        "event": event_name,
-        "data": data
     }
     sys.stdout.write(json.dumps(payload) + "\n")
     sys.stdout.flush()
@@ -192,15 +186,22 @@ class RestRuntimeFallback:
 
     async def copy_in(self, box_id: str, source: str, destination: str) -> bool:
         loop = asyncio.get_running_loop()
-        # In REST runtime, file uploads can be handled via /copy
-        body = {"source": source, "destination": destination}
-        await loop.run_in_executor(None, self._request, "POST", f"/boxes/{box_id}/copy-in", body)
-        return True
+        try:
+            body = {"source": source, "destination": destination}
+            await loop.run_in_executor(None, self._request, "POST", f"/boxes/{box_id}/copy-in", body)
+            return True
+        except Exception as e:
+            raise RuntimeError(
+                f"File copy_in failed in REST fallback: {e}. "
+                "Local-to-cloud file uploads require the official 'boxlite' native SDK wheel (boxlite==0.11.0). "
+                "Please configure a supported Python environment (Linux/macOS or WSL) to deploy local directories."
+            )
 
     async def tunnel(self, box_id: str, port: int, is_public: bool) -> Dict[str, Any]:
         loop = asyncio.get_running_loop()
         path = f"/boxes/{box_id}/network/tunnel?port={port}"
-        body = {"is_public": is_public} if not is_public else None
+        # OpenAPI schema requires camelCase 'isPublic' and additionalProperties: false
+        body = {"isPublic": is_public} if not is_public else None
         res = await loop.run_in_executor(None, self._request, "POST", path, body)
         return res
 
@@ -271,14 +272,6 @@ class BoxLiteBridge:
     async def handle_ping(self, args: Dict[str, Any]) -> Dict[str, Any]:
         return {"pong": True}
 
-    async def handle_version(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        try:
-            import boxlite
-            version = getattr(boxlite, "__version__", "0.11.0")
-            return {"installed": True, "version": version, "expected": "0.11.0"}
-        except ImportError:
-            return {"installed": True, "version": "0.11.0 (REST fallback)", "expected": "0.11.0"}
-
     async def handle_check_credentials(self, args: Dict[str, Any]) -> Dict[str, Any]:
         rt = self.ensure_runtime()
         boxes = await rt.list()
@@ -336,17 +329,27 @@ class BoxLiteBridge:
         name = args.get("name")
         image = args.get("image", "python")
         auto_remove = args.get("autoRemove", False)
-        auto_stop = args.get("autoStop", 0)
+        auto_stop = args.get("autoStop", args.get("auto_stop", 0))
         entrypoint = args.get("entrypoint")
         network_spec = args.get("network")
 
         if isinstance(rt, RestRuntimeFallback):
-            kwargs = {
-                "name": name,
-                "image": image,
-                "auto_remove": auto_remove,
-                "auto_stop": auto_stop,
+            # BoxLite Cloud REST API conforms to OpenAPI CreateBoxRequest (additionalProperties: false).
+            # 'auto_remove' is deprecated/client-side and MUST NOT be sent across the wire.
+            kwargs: Dict[str, Any] = {
+                "image": image or "python",
             }
+            if name:
+                kwargs["name"] = name
+            if auto_stop is not None:
+                # Boxlite Cloud requires auto_stop to be 0 (disabled) or >= 60 seconds
+                if 0 < auto_stop < 60:
+                    auto_stop = 60
+                kwargs["auto_stop"] = auto_stop
+            if "autoDelete" in args and args["autoDelete"] is not None:
+                kwargs["auto_delete"] = args["autoDelete"]
+            elif "auto_delete" in args and args["auto_delete"] is not None:
+                kwargs["auto_delete"] = args["auto_delete"]
             if entrypoint:
                 kwargs["entrypoint"] = entrypoint
             if network_spec:
@@ -357,7 +360,7 @@ class BoxLiteBridge:
             await rt.start(box_id)
             box = RestBoxFallback(rt, box_id, name or box_id)
             self.boxes[box_id] = box
-            return {"boxId": box_id, "name": name, "status": "running"}
+            return {"boxId": box_id, "name": name or box_id, "status": "running"}
 
         import boxlite
         outbound_spec = None
@@ -383,23 +386,31 @@ class BoxLiteBridge:
         kwargs = {
             "runtime": rt,
             "image": image,
-            "name": name,
             "auto_remove": auto_remove,
-            "auto_stop": auto_stop,
         }
+        if name:
+            kwargs["name"] = name
+        if auto_stop is not None:
+            kwargs["auto_stop"] = auto_stop
         if entrypoint:
             kwargs["entrypoint"] = entrypoint
         if net:
             kwargs["network"] = net
 
-        box = boxlite.SimpleBox(**kwargs)
+        try:
+            box = boxlite.SimpleBox(**kwargs)
+        except TypeError:
+            # Fallback if installed boxlite wheel rejects auto_stop or other kwargs
+            kwargs.pop("auto_stop", None)
+            box = boxlite.SimpleBox(**kwargs)
+
         await box.start()
         box_id = box.id
         self.boxes[box_id] = box
 
         return {
             "boxId": box_id,
-            "name": name,
+            "name": name or box_id,
             "status": "running"
         }
 

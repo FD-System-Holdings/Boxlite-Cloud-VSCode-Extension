@@ -69,7 +69,7 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
               {
                 command: 'boxlite.openUrl',
                 title: 'Open in Browser',
-                arguments: [element]
+                arguments: [element, t.url]
               },
               vscode.TreeItemCollapsibleState.None,
               'tunnel-item'

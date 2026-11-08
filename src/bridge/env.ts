@@ -2,13 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
-
-export interface PythonEnvInfo {
-  pythonPath: string;
-  version?: string;
-  isBoxliteInstalled: boolean;
-  boxliteVersion?: string;
-}
+import { parseExecutableCommand } from '../util/process';
 
 export class PythonEnvManager {
   private outputChannel: vscode.OutputChannel;
@@ -58,10 +52,9 @@ export class PythonEnvManager {
   private async testExecutable(execName: string): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       try {
-        const parts = execName.split(' ');
-        const bin = parts[0];
-        const args = parts.slice(1).concat(['-c', 'import sys; print(sys.version_info[0])']);
-        const proc = spawn(bin, args, { stdio: 'pipe' });
+        const { bin, args } = parseExecutableCommand(execName);
+        const fullArgs = args.concat(['-c', 'import sys; print(sys.version_info[0])']);
+        const proc = spawn(bin, fullArgs, { stdio: 'pipe' });
         let out = '';
         proc.stdout.on('data', (d) => { out += d.toString(); });
         proc.on('close', (code) => {
@@ -71,52 +64,6 @@ export class PythonEnvManager {
       } catch {
         resolve(false);
       }
-    });
-  }
-
-  public async checkEnvironment(pythonPath: string): Promise<PythonEnvInfo> {
-    return new Promise<PythonEnvInfo>((resolve) => {
-      const parts = pythonPath.split(' ');
-      const bin = parts[0];
-      const args = parts.slice(1).concat([
-        '-c',
-        'import sys; print("PY:" + sys.version.split()[0]);' +
-        'try:\n import boxlite;\n print("BOXLITE:" + getattr(boxlite, "__version__", "0.11.0"));\nexcept Exception as e:\n print("NO_BOXLITE:" + str(e))'
-      ]);
-
-      const proc = spawn(bin, args, { stdio: 'pipe' });
-      let output = '';
-      proc.stdout.on('data', (d) => { output += d.toString(); });
-      proc.on('close', (code) => {
-        if (code !== 0) {
-          resolve({ pythonPath, isBoxliteInstalled: false });
-          return;
-        }
-
-        let version: string | undefined;
-        let isBoxliteInstalled = false;
-        let boxliteVersion: string | undefined;
-
-        for (const line of output.split('\n')) {
-          const l = line.trim();
-          if (l.startsWith('PY:')) {
-            version = l.substring(3);
-          } else if (l.startsWith('BOXLITE:')) {
-            isBoxliteInstalled = true;
-            boxliteVersion = l.substring(8);
-          }
-        }
-
-        resolve({
-          pythonPath,
-          version,
-          isBoxliteInstalled,
-          boxliteVersion
-        });
-      });
-      proc.on('error', () => {
-        resolve({ pythonPath, isBoxliteInstalled: false });
-      });
     });
   }
 
@@ -144,10 +91,9 @@ export class PythonEnvManager {
         // Step 1: Create venv if not exists
         if (!fs.existsSync(pythonExecutable)) {
           const sysPython = await this.getPythonPath();
-          const parts = sysPython.split(' ');
-          const bin = parts[0];
-          const args = parts.slice(1).concat(['-m', 'venv', venvDir]);
-          await this.runProcess(bin, args, `Creating venv with ${bin}`);
+          const { bin, args } = parseExecutableCommand(sysPython);
+          const fullArgs = args.concat(['-m', 'venv', venvDir]);
+          await this.runProcess(bin, fullArgs, `Creating venv with ${bin}`);
         }
 
         progress.report({ message: 'Installing boxlite==0.11.0 SDK...' });
@@ -165,17 +111,23 @@ export class PythonEnvManager {
           'Upgrading pip'
         );
 
-        if (fs.existsSync(reqFile)) {
-          await this.runProcess(
-            pythonExecutable,
-            ['-m', 'pip', 'install', '-r', reqFile],
-            'Installing requirements'
-          );
-        } else {
-          await this.runProcess(
-            pythonExecutable,
-            ['-m', 'pip', 'install', 'boxlite==0.11.0'],
-            'Installing boxlite==0.11.0'
+        try {
+          if (fs.existsSync(reqFile)) {
+            await this.runProcess(
+              pythonExecutable,
+              ['-m', 'pip', 'install', '-r', reqFile],
+              'Installing requirements'
+            );
+          } else {
+            await this.runProcess(
+              pythonExecutable,
+              ['-m', 'pip', 'install', 'boxlite==0.11.0'],
+              'Installing boxlite==0.11.0'
+            );
+          }
+        } catch (pipErr: any) {
+          this.outputChannel.appendLine(
+            `[setup] Notice: Native boxlite wheel installation was skipped or failed (${pipErr.message}). Pure-Python REST bridge fallback will be used.`
           );
         }
 

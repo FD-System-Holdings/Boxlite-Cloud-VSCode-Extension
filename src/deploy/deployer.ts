@@ -5,7 +5,7 @@ import * as https from 'https';
 import * as http from 'http';
 import { BoxLiteBridgeClient } from '../bridge/client';
 import { CredentialsManager } from '../auth/credentials';
-import { ProjectManager } from './project';
+import { ProjectManager, buildSupervisorEntrypoint } from './project';
 import { LogStreamManager } from '../logs/logStream';
 import { diagnoseError } from '../util/diagnosis';
 
@@ -85,11 +85,7 @@ export class BoxLiteDeployer {
             this.outputChannel.appendLine(`[deploy] Provisioning new Box: ${boxName}...`);
 
             // Supervisor entrypoint ensures PID 1 stays alive and restarts app when server.py exists
-            const supervisor = [
-              'sh',
-              '-c',
-              'while true; do if [ -f /app/server.py ]; then cd /app && python3 -u server.py >>/tmp/server.log 2>&1; fi; sleep 2; done'
-            ];
+            const supervisor = buildSupervisorEntrypoint(config.start || 'python3 -u server.py');
 
             const created = await this.bridge.createBox({
               name: boxName,
@@ -125,18 +121,25 @@ export class BoxLiteDeployer {
           const sourcePath = appDir.endsWith('/') || appDir.endsWith('\\') ? appDir + '.' : appDir + '/.';
           await this.bridge.copyIn(boxId, sourcePath, '/app');
 
-          // Step 5: Verify files landed
-          const testRes = await this.bridge.exec(boxId, 'test', ['-f', '/app/server.py']);
-          if (testRes.exitCode !== 0) {
-            throw new Error('Verification failed: /app/server.py not found in guest filesystem.');
+          // Clean any ignored paths (.venv, node_modules, .env, __pycache__) from guest rootfs
+          const ignores = ProjectManager.getIgnorePatterns(workspaceRoot);
+          for (const ign of ignores) {
+            if (ign.startsWith('*')) {
+              continue;
+            }
+            await this.bridge.exec(boxId, 'rm', ['-rf', `/app/${ign}`]);
           }
-          this.outputChannel.appendLine('[deploy] Code uploaded and verified successfully.');
+
+          // Step 5: Restart running process so supervisor re-launches with newly deployed files
+          progress.report({ message: 'Restarting application in guest...' });
+          await this.bridge.exec(boxId, 'sh', ['-c', 'pkill -f python3 || true']);
+          this.outputChannel.appendLine('[deploy] Code uploaded and application restart signal sent.');
 
           // Step 6: Wait for guest healthz readiness
           progress.report({ message: 'Verifying internal service health...' });
           const port = config.port || 8080;
           const healthPath = config.healthPath || '/healthz';
-          const probePy = `import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:${port}${healthPath}', timeout=2).read() == b'ok'`;
+          const probePy = `import urllib.request; resp = urllib.request.urlopen('http://127.0.0.1:${port}${healthPath}', timeout=2); assert 200 <= resp.status < 300`;
 
           let healthy = false;
           for (let attempt = 1; attempt <= 30; attempt++) {
@@ -168,7 +171,9 @@ export class BoxLiteDeployer {
           // Step 8: Outside-the-box readiness check (proxy propagation)
           progress.report({ message: 'Testing external URL access...' });
           let externalOk = false;
-          const checkUrl = `${publicUrl}${healthPath}`;
+          const base = publicUrl.endsWith('/') ? publicUrl : `${publicUrl}/`;
+          const rel = healthPath.startsWith('/') ? healthPath.substring(1) : healthPath;
+          const checkUrl = new URL(rel, base).toString();
 
           for (let attempt = 1; attempt <= 10; attempt++) {
             try {
@@ -224,7 +229,8 @@ export class BoxLiteDeployer {
         } catch (error: any) {
           this.outputChannel.appendLine(`[deploy] ERROR: ${error.message}`);
           const diag = diagnoseError(error.message);
-          vscode.window.showErrorMessage(`Deployment failed: ${error.message}\nDiagnosis: ${diag.summary}`);
+          const msg = error.message.includes('Diagnosis:') ? error.message : `${error.message}\nDiagnosis: ${diag.summary}`;
+          vscode.window.showErrorMessage(`Deployment failed: ${msg}`);
         }
       }
     );
@@ -248,6 +254,7 @@ function checkHttpHealth(targetUrl: string, token?: string): Promise<number> {
         timeout: 10000
       },
       (res) => {
+        res.resume();
         resolve(res.statusCode || 0);
       }
     );

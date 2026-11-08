@@ -41,6 +41,17 @@ export function diagnoseError(errorMessage: string, code?: string): DiagnosticMe
     };
   }
 
+  if (lower.includes('400') || lower.includes('bad request') || lower.includes('should not exist')) {
+    return {
+      summary: '400 Bad Request / Schema Validation Error',
+      checklist: [
+        'Check that request parameters match the BoxLite Cloud REST API schema',
+        'Verify unsupported or deprecated fields (such as auto_remove) are not sent in request payload',
+        'Ensure auto_stop is 0 (disabled) or at least 60 seconds'
+      ]
+    };
+  }
+
   if (code === 'NetworkError' || lower.includes('networkerror') || lower.includes('connection refused')) {
     return {
       summary: 'BoxLite Cloud Network Error',
