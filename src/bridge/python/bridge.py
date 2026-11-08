@@ -96,7 +96,11 @@ class RestBoxFallback:
         return await self.rt.inspect(self.id)
 
     async def exec(self, *cmd):
-        return await self.rt.exec(self.id, list(cmd))
+        if len(cmd) == 2 and isinstance(cmd[1], (list, tuple)):
+            cmd_list = [cmd[0]] + list(cmd[1])
+        else:
+            cmd_list = list(cmd)
+        return await self.rt.exec(self.id, cmd_list)
 
     async def copy_in(self, source: str, destination: str):
         return await self.rt.copy_in(self.id, source, destination)
@@ -178,10 +182,18 @@ class RestRuntimeFallback:
         args = list(cmd[1:]) if len(cmd) > 1 else []
         body = {"command": command, "args": args}
         res = await loop.run_in_executor(None, self._request, "POST", f"/boxes/{box_id}/exec", body)
+        if not isinstance(res, dict):
+            return ExecResultFallback(exit_code=0, stdout=str(res) if res is not None else "", stderr="")
+        stdout = res.get("stdout") or res.get("stdOut") or res.get("output") or ""
+        stderr = res.get("stderr") or res.get("stdErr") or ""
+        if isinstance(res.get("result"), dict):
+            stdout = stdout or res["result"].get("stdout") or res["result"].get("output") or ""
+            stderr = stderr or res["result"].get("stderr") or ""
+        exit_code = res.get("exit_code", res.get("exitCode", res.get("result", {}).get("exit_code", 0) if isinstance(res.get("result"), dict) else 0))
         return ExecResultFallback(
-            exit_code=res.get("exit_code", res.get("exitCode", 0)),
-            stdout=res.get("stdout", ""),
-            stderr=res.get("stderr", "")
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr
         )
 
     async def copy_in(self, box_id: str, source: str, destination: str) -> bool:
@@ -447,10 +459,22 @@ class BoxLiteBridge:
 
         full_cmd = [cmd] + cmd_args if cmd_args else [cmd]
         res = await box.exec(*full_cmd)
+        if hasattr(res, "wait") and callable(res.wait):
+            res = await res.wait()
 
-        exit_code = getattr(res, "exit_code", 0)
+        exit_code = getattr(res, "exit_code", getattr(res, "exitCode", 0))
         stdout = getattr(res, "stdout", "")
         stderr = getattr(res, "stderr", "")
+
+        if callable(stdout):
+            stdout = stdout()
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", errors="replace")
+
+        if callable(stderr):
+            stderr = stderr()
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
 
         return {
             "exitCode": exit_code,
@@ -567,10 +591,20 @@ class BoxLiteBridge:
         box = self.get_or_attach_box(box_id)
 
         res = await box.exec("tail", f"-n{lines}", log_file)
+        if hasattr(res, "wait") and callable(res.wait):
+            res = await res.wait()
+
+        stdout = getattr(res, "stdout", "")
+        if callable(stdout):
+            stdout = stdout()
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", errors="replace")
+
+        exit_code = getattr(res, "exit_code", getattr(res, "exitCode", 0))
         return {
             "boxId": box_id,
-            "content": getattr(res, "stdout", ""),
-            "exitCode": getattr(res, "exit_code", 0)
+            "content": stdout,
+            "exitCode": exit_code
         }
 
     async def dispatch(self, req: Dict[str, Any]):
