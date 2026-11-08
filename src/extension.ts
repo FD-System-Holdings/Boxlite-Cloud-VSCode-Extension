@@ -20,15 +20,15 @@ export async function activate(context: vscode.ExtensionContext) {
   const bridge = new BoxLiteBridgeClient(context, credentials, envManager, outputChannel);
   context.subscriptions.push(bridge);
 
-  const treeProvider = new BoxesTreeDataProvider(bridge, credentials);
+  const logManager = new LogStreamManager(bridge);
+  context.subscriptions.push(logManager);
+
+  const treeProvider = new BoxesTreeDataProvider(bridge, credentials, logManager);
   const treeView = vscode.window.createTreeView('boxlite.boxesView', {
     treeDataProvider: treeProvider,
     showCollapseAll: true
   });
   context.subscriptions.push(treeView);
-
-  const logManager = new LogStreamManager(bridge);
-  context.subscriptions.push(logManager);
 
   const deployer = new BoxLiteDeployer(
     bridge,

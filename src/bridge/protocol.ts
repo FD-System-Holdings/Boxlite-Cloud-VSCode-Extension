@@ -95,4 +95,6 @@ export interface TailLogResult {
   boxId: string;
   content: string;
   exitCode: number;
+  stopped?: boolean;
+  status?: string;
 }

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { BoxLiteBridgeClient } from '../bridge/client';
 import { CredentialsManager } from '../auth/credentials';
+import { LogStreamManager } from '../logs/logStream';
 import { BoxLiteTreeItem, AccountTreeItem, BoxTreeItem, BoxChildTreeItem } from './nodes';
 
 export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTreeItem> {
@@ -11,7 +12,8 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
 
   constructor(
     private bridge: BoxLiteBridgeClient,
-    private credentials: CredentialsManager
+    private credentials: CredentialsManager,
+    private logManager?: LogStreamManager
   ) {}
 
   public refresh(): void {
@@ -54,10 +56,47 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
     }
 
     if (element instanceof BoxTreeItem) {
-      // Children of a Box: Tunnels, Network, Logs, Info
+      // Children of a Box: Power Action, Tunnels, Network, Logs, Info
       const children: BoxLiteTreeItem[] = [];
+      const status = (element.box.status || '').toLowerCase().trim();
+      const isStopped = status === 'stopped' || status === 'terminated' || status === 'exited';
 
-      // 1. Tunnels / URLs
+      // 1. Power Action (Stop / Start Box)
+      if (!isStopped) {
+        children.push(
+          new BoxChildTreeItem(
+            'Stop Box',
+            'Halt microVM execution',
+            'primitive-square',
+            {
+              command: 'boxlite.stopBox',
+              title: 'Stop Box',
+              arguments: [element]
+            },
+            vscode.TreeItemCollapsibleState.None,
+            'box-stop-action',
+            element.box.id
+          )
+        );
+      } else {
+        children.push(
+          new BoxChildTreeItem(
+            'Start Box',
+            'Boot microVM',
+            'play',
+            {
+              command: 'boxlite.startBox',
+              title: 'Start Box',
+              arguments: [element]
+            },
+            vscode.TreeItemCollapsibleState.None,
+            'box-start-action',
+            element.box.id
+          )
+        );
+      }
+
+      // 2. Tunnels / URLs
       if (element.tunnels && element.tunnels.length > 0) {
         for (const t of element.tunnels) {
           const typeLabel = t.isPublic ? 'Public URL' : 'Private URL';
@@ -91,7 +130,7 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
         );
       }
 
-      // 2. Network policy
+      // 3. Network policy
       children.push(
         new BoxChildTreeItem(
           'Network Policy',
@@ -105,21 +144,25 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
         )
       );
 
-      // 3. Application Logs
+      // 4. Application Logs
+      const isStreaming = this.logManager?.isStreaming(element.box.id);
       children.push(
         new BoxChildTreeItem(
-          'Application Logs',
-          '/tmp/server.log',
-          'output',
+          isStreaming ? 'Stop Streaming Logs' : 'Application Logs',
+          isStreaming ? 'Active log stream (polling)' : '/tmp/server.log',
+          isStreaming ? 'close' : 'output',
           {
-            command: 'boxlite.streamLogs',
-            title: 'Stream Logs',
+            command: isStreaming ? 'boxlite.stopLogs' : 'boxlite.streamLogs',
+            title: isStreaming ? 'Stop Streaming' : 'Stream Logs',
             arguments: [element]
-          }
+          },
+          vscode.TreeItemCollapsibleState.None,
+          isStreaming ? 'box-stop-logs-action' : 'box-stream-logs-action',
+          element.box.id
         )
       );
 
-      // 4. Execute Command
+      // 5. Execute Command
       children.push(
         new BoxChildTreeItem(
           'Execute Command',
@@ -133,7 +176,7 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
         )
       );
 
-      // 5. Inspect JSON
+      // 6. Inspect JSON
       children.push(
         new BoxChildTreeItem(
           'Inspect Box Details',

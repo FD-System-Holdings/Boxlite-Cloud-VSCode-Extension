@@ -210,18 +210,28 @@
           "group": "0_action@3"
         },
         {
+          "command": "boxlite.stopBox",
+          "when": "view == boxlite.boxesView && (viewItem =~ /.*canStop.*/ || viewItem =~ /.*isRunning.*/)",
+          "group": "inline@1"
+        },
+        {
+          "command": "boxlite.startBox",
+          "when": "view == boxlite.boxesView && (viewItem =~ /.*canStart.*/ || viewItem =~ /.*isStopped.*/)",
+          "group": "inline@1"
+        },
+        {
           "command": "boxlite.deployFromTree",
           "when": "view == boxlite.boxesView && viewItem =~ /^box-.*/",
           "group": "1_manage@1"
         },
         {
-          "command": "boxlite.startBox",
-          "when": "view == boxlite.boxesView && viewItem =~ /.*isStopped.*/",
+          "command": "boxlite.stopBox",
+          "when": "view == boxlite.boxesView && (viewItem =~ /.*canStop.*/ || viewItem =~ /.*isRunning.*/)",
           "group": "1_manage@2"
         },
         {
-          "command": "boxlite.stopBox",
-          "when": "view == boxlite.boxesView && viewItem =~ /.*isRunning.*/",
+          "command": "boxlite.startBox",
+          "when": "view == boxlite.boxesView && (viewItem =~ /.*canStart.*/ || viewItem =~ /.*isStopped.*/)",
           "group": "1_manage@3"
         },
         {
@@ -235,14 +245,19 @@
           "group": "2_inspect@1"
         },
         {
+          "command": "boxlite.stopLogs",
+          "when": "view == boxlite.boxesView && viewItem =~ /^box-.*/",
+          "group": "2_inspect@2"
+        },
+        {
           "command": "boxlite.execCommand",
           "when": "view == boxlite.boxesView && viewItem =~ /.*isRunning.*/",
-          "group": "2_inspect@2"
+          "group": "2_inspect@3"
         },
         {
           "command": "boxlite.inspectBox",
           "when": "view == boxlite.boxesView && viewItem =~ /^box-.*/",
-          "group": "2_inspect@3"
+          "group": "2_inspect@4"
         },
         {
           "command": "boxlite.setAccess",

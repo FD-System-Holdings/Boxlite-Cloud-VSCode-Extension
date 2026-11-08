@@ -42,6 +42,12 @@ const mockVscode = {
     Expanded: 2
   },
   ThemeIcon: class {
+    constructor(id, color) {
+      this.id = id;
+      this.color = color;
+    }
+  },
+  ThemeColor: class {
     constructor(id) {
       this.id = id;
     }

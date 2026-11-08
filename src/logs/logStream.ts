@@ -89,6 +89,12 @@ export class LogStreamManager implements vscode.Disposable {
         const res = await this.bridge.tailLog(boxId, '/tmp/server.log', 50);
         this.errorCounts.set(boxId, 0);
 
+        if (res.stopped) {
+          channel!.appendLine(`[boxlite] Box ${boxId.substring(0, 8)} is stopped. Log streaming paused.`);
+          this.stopStreaming(boxId);
+          return;
+        }
+
         if (res.content && res.content !== lastContent) {
           const delta = computeLogDelta(lastContent, res.content);
           if (delta.length > 0) {
@@ -97,6 +103,12 @@ export class LogStreamManager implements vscode.Disposable {
           lastContent = res.content;
         }
       } catch (err: any) {
+        const msg = (err.message || '').toLowerCase();
+        if (msg.includes('stopped') || msg.includes('not running') || msg.includes('inactive')) {
+          channel!.appendLine(`[boxlite] Box is not running. Log streaming paused.`);
+          this.stopStreaming(boxId);
+          return;
+        }
         const errs = (this.errorCounts.get(boxId) || 0) + 1;
         this.errorCounts.set(boxId, errs);
         if (errs >= 5) {

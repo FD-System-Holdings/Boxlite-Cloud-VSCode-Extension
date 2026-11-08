@@ -413,8 +413,9 @@ export function registerCommands(
       if (!boxId) {
         return;
       }
-      const boxName = item?.box.name || boxId.substring(0, 8);
+      const boxName = item?.box?.name || boxId.substring(0, 8);
       await logManager.openOrStreamLogs(boxId, boxName);
+      treeProvider.refresh();
     })
   );
 
@@ -425,6 +426,7 @@ export function registerCommands(
         return;
       }
       logManager.stopStreaming(boxId);
+      treeProvider.refresh();
       vscode.window.showInformationMessage(`Stopped streaming logs for Box ${boxId.substring(0, 8)}.`);
     })
   );
@@ -493,9 +495,15 @@ export function registerCommands(
   );
 }
 
-async function resolveBoxId(item?: BoxTreeItem, bridge?: BoxLiteBridgeClient): Promise<string | undefined> {
+async function resolveBoxId(item?: any, bridge?: BoxLiteBridgeClient): Promise<string | undefined> {
+  if (typeof item === 'string' && item.trim().length > 0) {
+    return item.trim();
+  }
   if (item && item.box && item.box.id) {
     return item.box.id;
+  }
+  if (item && item.boxId) {
+    return item.boxId;
   }
   if (!bridge) {
     return undefined;

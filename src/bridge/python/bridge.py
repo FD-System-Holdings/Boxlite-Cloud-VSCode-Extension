@@ -155,6 +155,9 @@ class RestRuntimeFallback:
             return res
         return []
 
+    async def list_info(self) -> List[Dict[str, Any]]:
+        return await self.list()
+
     async def inspect(self, box_id: str) -> Dict[str, Any]:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._request, "GET", f"/boxes/{box_id}")
@@ -286,23 +289,39 @@ class BoxLiteBridge:
 
     async def handle_check_credentials(self, args: Dict[str, Any]) -> Dict[str, Any]:
         rt = self.ensure_runtime()
-        boxes = await rt.list()
+        boxes = await (rt.list_info() if hasattr(rt, "list_info") else rt.list())
         items = []
         for b in boxes:
-            b_id = getattr(b, "id", None) or (b.get("id") or b.get("box_id") if isinstance(b, dict) else str(b))
-            b_name = getattr(b, "name", "") or (b.get("name") if isinstance(b, dict) else "")
+            if isinstance(b, dict):
+                b_id = b.get("id") or b.get("box_id") or ""
+                b_name = b.get("name") or ""
+            else:
+                b_id = getattr(b, "id", None) or getattr(b, "box_id", None) or str(b)
+                b_name = getattr(b, "name", "") or ""
             items.append({"id": b_id, "name": b_name})
         return {"valid": True, "boxCount": len(items)}
 
     async def handle_list_boxes(self, args: Dict[str, Any]) -> Dict[str, Any]:
         rt = self.ensure_runtime()
-        boxes = await rt.list()
+        boxes = await (rt.list_info() if hasattr(rt, "list_info") else rt.list())
         result = []
         for b in boxes:
-            b_id = getattr(b, "id", None) or (b.get("id") or b.get("box_id") if isinstance(b, dict) else str(b))
-            b_name = getattr(b, "name", "") or (b.get("name") if isinstance(b, dict) else "")
-            b_status = getattr(b, "status", "unknown") or (b.get("status") if isinstance(b, dict) else "unknown")
-            b_image = getattr(b, "image", "python") or (b.get("image") if isinstance(b, dict) else "python")
+            if isinstance(b, dict):
+                b_id = b.get("id") or b.get("box_id") or ""
+                b_name = b.get("name") or ""
+                state_val = b.get("state")
+                raw_status = b.get("status") or (state_val.get("status") if isinstance(state_val, dict) else state_val)
+                b_image = b.get("image") or "python"
+                b_tunnels = b.get("tunnels")
+            else:
+                b_id = getattr(b, "id", None) or getattr(b, "box_id", None) or str(b)
+                b_name = getattr(b, "name", "") or ""
+                state_attr = getattr(b, "state", None)
+                raw_status = getattr(state_attr, "status", None) if state_attr is not None else getattr(b, "status", None)
+                b_image = getattr(b, "image", None) or "python"
+                b_tunnels = getattr(b, "tunnels", None)
+
+            b_status = str(getattr(raw_status, "value", raw_status)).lower() if raw_status else "unknown"
 
             box_info = {
                 "id": b_id,
@@ -310,10 +329,8 @@ class BoxLiteBridge:
                 "status": b_status,
                 "image": b_image,
             }
-            if hasattr(b, "tunnels"):
-                box_info["tunnels"] = getattr(b, "tunnels")
-            elif isinstance(b, dict) and "tunnels" in b:
-                box_info["tunnels"] = b["tunnels"]
+            if b_tunnels is not None:
+                box_info["tunnels"] = b_tunnels
             result.append(box_info)
         return {"boxes": result}
 
@@ -588,6 +605,27 @@ class BoxLiteBridge:
         box_id = args["boxId"]
         log_file = args.get("logFile", "/tmp/server.log")
         lines = int(args.get("lines", 100))
+        rt = self.ensure_runtime()
+
+        # Prevent waking up stopped boxes with tail execution
+        try:
+            info = await rt.inspect(box_id) if hasattr(rt, "inspect") else None
+            status = ""
+            if isinstance(info, dict):
+                status = str(info.get("status", "")).lower().strip()
+            elif hasattr(info, "status"):
+                status = str(getattr(info, "status", "")).lower().strip()
+            if status in ("stopped", "terminated", "exited"):
+                return {
+                    "boxId": box_id,
+                    "content": "",
+                    "exitCode": 0,
+                    "status": status,
+                    "stopped": True
+                }
+        except Exception:
+            pass
+
         box = self.get_or_attach_box(box_id)
 
         res = await box.exec("tail", f"-n{lines}", log_file)

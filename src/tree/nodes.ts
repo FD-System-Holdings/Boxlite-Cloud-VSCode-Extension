@@ -41,11 +41,14 @@ export class BoxTreeItem extends BoxLiteTreeItem {
     this.box = box;
     this.tunnels = box.tunnels || [];
 
-    const isRunning = box.status === 'running';
-    const isStopped = box.status === 'stopped';
+    const status = (box.status || '').toLowerCase().trim() || 'unknown';
+    const isRunning = status === 'running' || status === 'ready' || status === 'active';
+    const isStopped = status === 'stopped' || status === 'terminated' || status === 'exited';
+    const canStop = !isStopped;
+    const canStart = !isRunning;
 
-    this.description = `${box.status} · ${box.id.substring(0, 8)}`;
-    this.tooltip = `Box ID: ${box.id}\nName: ${box.name}\nStatus: ${box.status}\nImage: ${box.image || 'python'}`;
+    this.description = `${status} · ${box.id.substring(0, 8)}`;
+    this.tooltip = `Box ID: ${box.id}\nName: ${box.name}\nStatus: ${status}\nImage: ${box.image || 'python'}`;
 
     if (isRunning) {
       this.iconPath = new vscode.ThemeIcon('play-circle', new vscode.ThemeColor('testing.iconPassed'));
@@ -55,10 +58,10 @@ export class BoxTreeItem extends BoxLiteTreeItem {
       this.iconPath = new vscode.ThemeIcon('sync~spin');
     }
 
-    // Context value controls context menu actions
+    // Context value controls context menu and inline actions
     const hasTunnels = this.tunnels.length > 0;
     const hasToken = this.tunnels.some((t) => !!t.token);
-    this.contextValue = `box-${box.status}${isRunning ? '-isRunning' : ''}${isStopped ? '-isStopped' : ''}${hasTunnels ? '-canOpenUrl' : ''}${hasToken ? '-hasToken' : ''}`;
+    this.contextValue = `box-${status}${canStop ? '-canStop' : ''}${canStart ? '-canStart' : ''}${isRunning ? '-isRunning' : ''}${isStopped ? '-isStopped' : ''}${hasTunnels ? '-canOpenUrl' : ''}${hasToken ? '-hasToken' : ''}`;
   }
 }
 
@@ -69,7 +72,8 @@ export class BoxChildTreeItem extends BoxLiteTreeItem {
     icon?: string,
     command?: vscode.Command,
     collapsible: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
-    contextValue?: string
+    contextValue?: string,
+    public readonly boxId?: string
   ) {
     super(label, collapsible);
     this.description = description;
