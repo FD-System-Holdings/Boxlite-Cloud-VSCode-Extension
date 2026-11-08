@@ -1,0 +1,22 @@
+node_modules/
+dist/
+out/
+.vscode-test/
+*.vsix
+.DS_Store
+*.log
+.venv/
+__pycache__/
+*.pyc
+
+# Environment & Secrets
+.env
+.env.*
+*.key
+*.pem
+*.cert
+*.crt
+
+# Local caches & configs
+.cache/
+boxlite.json

@@ -1,0 +1,303 @@
+{
+  "name": "rc-boxlite-vscode",
+  "displayName": "BoxLite",
+  "description": "Deploy and manage BoxLite cloud applications with ease",
+  "version": "0.1.0",
+  "publisher": "boxlite",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Cloud Computing",
+    "Deployment",
+    "Other"
+  ],
+  "keywords": [
+    "boxlite",
+    "cloud",
+    "deploy",
+    "microvms",
+    "containers",
+    "serverless"
+  ],
+  "activationEvents": [
+    "onView:boxlite.boxesView"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "boxlite-explorer",
+          "title": "BoxLite",
+          "icon": "media/boxlite-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "boxlite-explorer": [
+        {
+          "id": "boxlite.boxesView",
+          "name": "Boxes",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "boxlite.setApiKey",
+        "title": "Sign In / Set API Key",
+        "category": "BoxLite",
+        "icon": "$(key)"
+      },
+      {
+        "command": "boxlite.signOut",
+        "title": "Sign Out",
+        "category": "BoxLite",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "boxlite.refresh",
+        "title": "Refresh",
+        "category": "BoxLite",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "boxlite.setupEnvironment",
+        "title": "Set Up Python Environment",
+        "category": "BoxLite",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "boxlite.newProject",
+        "title": "Create New BoxLite Project...",
+        "category": "BoxLite",
+        "icon": "$(add)"
+      },
+      {
+        "command": "boxlite.deploy",
+        "title": "Deploy to Box",
+        "category": "BoxLite",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "boxlite.deployFromTree",
+        "title": "Deploy Workspace to this Box",
+        "category": "BoxLite",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "boxlite.createBox",
+        "title": "Create Box...",
+        "category": "BoxLite",
+        "icon": "$(add)"
+      },
+      {
+        "command": "boxlite.startBox",
+        "title": "Start Box",
+        "category": "BoxLite",
+        "icon": "$(play)"
+      },
+      {
+        "command": "boxlite.stopBox",
+        "title": "Stop Box",
+        "category": "BoxLite",
+        "icon": "$(primitive-square)"
+      },
+      {
+        "command": "boxlite.restartApp",
+        "title": "Restart Application",
+        "category": "BoxLite",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "boxlite.deleteBox",
+        "title": "Delete Box",
+        "category": "BoxLite",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "boxlite.openUrl",
+        "title": "Open Public URL",
+        "category": "BoxLite",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "boxlite.copyUrl",
+        "title": "Copy Public URL",
+        "category": "BoxLite",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "boxlite.copyAccessToken",
+        "title": "Copy Private Access Token",
+        "category": "BoxLite",
+        "icon": "$(key)"
+      },
+      {
+        "command": "boxlite.setAccess",
+        "title": "Configure Inbound / Public Access...",
+        "category": "BoxLite",
+        "icon": "$(lock)"
+      },
+      {
+        "command": "boxlite.configureOutbound",
+        "title": "Configure Outbound Network Allowlist...",
+        "category": "BoxLite",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "boxlite.streamLogs",
+        "title": "Stream Logs",
+        "category": "BoxLite",
+        "icon": "$(output)"
+      },
+      {
+        "command": "boxlite.execCommand",
+        "title": "Execute Command in Box...",
+        "category": "BoxLite",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "boxlite.inspectBox",
+        "title": "Inspect Box (JSON)",
+        "category": "BoxLite",
+        "icon": "$(json)"
+      },
+      {
+        "command": "boxlite.openDocs",
+        "title": "Open Documentation",
+        "category": "BoxLite",
+        "icon": "$(book)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "boxlite.refresh",
+          "when": "view == boxlite.boxesView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "boxlite.createBox",
+          "when": "view == boxlite.boxesView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "boxlite.deploy",
+          "when": "view == boxlite.boxesView",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "boxlite.openUrl",
+          "when": "view == boxlite.boxesView && viewItem =~ /.*canOpenUrl.*/",
+          "group": "0_action@1"
+        },
+        {
+          "command": "boxlite.copyUrl",
+          "when": "view == boxlite.boxesView && viewItem =~ /.*canOpenUrl.*/",
+          "group": "0_action@2"
+        },
+        {
+          "command": "boxlite.copyAccessToken",
+          "when": "view == boxlite.boxesView && viewItem =~ /.*hasToken.*/",
+          "group": "0_action@3"
+        },
+        {
+          "command": "boxlite.deployFromTree",
+          "when": "view == boxlite.boxesView && viewItem =~ /^box-.*/",
+          "group": "1_manage@1"
+        },
+        {
+          "command": "boxlite.startBox",
+          "when": "view == boxlite.boxesView && viewItem =~ /.*isStopped.*/",
+          "group": "1_manage@2"
+        },
+        {
+          "command": "boxlite.stopBox",
+          "when": "view == boxlite.boxesView && viewItem =~ /.*isRunning.*/",
+          "group": "1_manage@3"
+        },
+        {
+          "command": "boxlite.restartApp",
+          "when": "view == boxlite.boxesView && viewItem =~ /.*isRunning.*/",
+          "group": "1_manage@4"
+        },
+        {
+          "command": "boxlite.streamLogs",
+          "when": "view == boxlite.boxesView && viewItem =~ /^box-.*/",
+          "group": "2_inspect@1"
+        },
+        {
+          "command": "boxlite.execCommand",
+          "when": "view == boxlite.boxesView && viewItem =~ /.*isRunning.*/",
+          "group": "2_inspect@2"
+        },
+        {
+          "command": "boxlite.inspectBox",
+          "when": "view == boxlite.boxesView && viewItem =~ /^box-.*/",
+          "group": "2_inspect@3"
+        },
+        {
+          "command": "boxlite.setAccess",
+          "when": "view == boxlite.boxesView && viewItem =~ /^box-.*/",
+          "group": "3_network@1"
+        },
+        {
+          "command": "boxlite.configureOutbound",
+          "when": "view == boxlite.boxesView && viewItem =~ /^box-.*/",
+          "group": "3_network@2"
+        },
+        {
+          "command": "boxlite.deleteBox",
+          "when": "view == boxlite.boxesView && viewItem =~ /^box-.*/",
+          "group": "9_danger@1"
+        }
+      ]
+    },
+    "configuration": {
+      "type": "object",
+      "title": "BoxLite",
+      "properties": {
+        "boxlite.restUrl": {
+          "type": "string",
+          "default": "https://api.boxlite.ai",
+          "description": "BoxLite Cloud REST API URL (e.g. https://api.boxlite.ai)"
+        },
+        "boxlite.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path to python executable to run the BoxLite SDK bridge (leave empty for automatic resolution)"
+        },
+        "boxlite.defaultPort": {
+          "type": "number",
+          "default": 8080,
+          "description": "Default port for app server tunnels"
+        },
+        "boxlite.autoStop": {
+          "type": "number",
+          "default": 0,
+          "description": "Default auto_stop seconds for created boxes (0 = never auto stop)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "compile": "tsc -p ./",
+    "watch": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "package": "npx @vscode/vsce package",
+    "test": "tsc -p ./tsconfig.test.json && mocha -r test/mock-vscode.js out/test/**/*.test.js"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.80.0",
+    "esbuild": "^0.20.0",
+    "mocha": "^10.3.0",
+    "typescript": "^5.3.3"
+  }
+}
