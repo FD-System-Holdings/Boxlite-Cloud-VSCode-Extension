@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { BoxLiteBridgeClient } from '../bridge/client';
-import { CreateBoxArgs } from '../bridge/protocol';
+import { CreateBoxArgs, VolumeItem } from '../bridge/protocol';
 import { CredentialsManager } from '../auth/credentials';
 import { PythonEnvManager } from '../bridge/env';
 import { BoxesTreeDataProvider } from '../tree/boxesProvider';
@@ -615,34 +615,39 @@ export function registerCommands(
         return;
       }
 
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: `Creating BoxLite persistent volume${name.trim() ? ` "${name.trim()}"` : ''}...`
-        },
-        async () => {
-          try {
-            const vol = await bridge.createVolume({
+      let vol: VolumeItem | undefined;
+      try {
+        vol = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Creating BoxLite persistent volume${name.trim() ? ` "${name.trim()}"` : ''}...`
+          },
+          async () => {
+            return await bridge.createVolume({
               name: name.trim() ? name.trim() : undefined
             });
-            volumesProvider?.refresh();
-            const choice = await vscode.window.showInformationMessage(
-              `Volume "${vol.name}" created (ID: ${vol.id}).`,
-              'Mount in Box...',
-              'Copy ID'
-            );
-            if (choice === 'Mount in Box...') {
-              await vscode.commands.executeCommand('boxlite.addVolumeToBox', vol);
-            } else if (choice === 'Copy ID') {
-              await vscode.env.clipboard.writeText(vol.id);
-            }
-          } catch (e: any) {
-            const diag = diagnoseError(e.message);
-            const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
-            vscode.window.showErrorMessage(`Failed to create volume: ${msg}`);
           }
+        );
+        volumesProvider?.refresh();
+      } catch (e: any) {
+        const diag = diagnoseError(e.message);
+        const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
+        vscode.window.showErrorMessage(`Failed to create volume: ${msg}`);
+        return;
+      }
+
+      if (vol) {
+        const choice = await vscode.window.showInformationMessage(
+          `Volume "${vol.name}" created (ID: ${vol.id}).`,
+          'Mount in Box...',
+          'Copy ID'
+        );
+        if (choice === 'Mount in Box...') {
+          await vscode.commands.executeCommand('boxlite.addVolumeToBox', vol);
+        } else if (choice === 'Copy ID') {
+          await vscode.env.clipboard.writeText(vol.id);
         }
-      );
+      }
     })
   );
 

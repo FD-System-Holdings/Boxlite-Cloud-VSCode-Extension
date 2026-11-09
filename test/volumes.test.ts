@@ -297,3 +297,71 @@ describe('Package.json Volumes UI Contribution Specifications', () => {
     );
   });
 });
+
+describe('Volume Creation Command Lifecycle', () => {
+  it('should complete withProgress before awaiting showInformationMessage', async () => {
+    const vscode = require('vscode');
+    const { registerCommands } = require('../src/commands');
+
+    let withProgressCompleted = false;
+    let messageShownWhileProgressPending = false;
+    let createdVolume = false;
+
+    const originalWithProgress = vscode.window.withProgress;
+    const originalShowInputBox = vscode.window.showInputBox;
+    const originalShowInfo = vscode.window.showInformationMessage;
+
+    try {
+      vscode.window.showInputBox = async () => 'exampleName';
+      vscode.window.withProgress = async (_options: any, task: any) => {
+        const res = await task({ report: () => {} });
+        withProgressCompleted = true;
+        return res;
+      };
+      vscode.window.showInformationMessage = async () => {
+        if (!withProgressCompleted) {
+          messageShownWhileProgressPending = true;
+        }
+        return undefined;
+      };
+
+      const mockBridge: any = {
+        createVolume: async (args: any) => {
+          createdVolume = true;
+          return { id: 'vol_test123', name: args.name || 'vol_test123', state: 'ready' };
+        }
+      };
+      const mockVolumesProvider: any = {
+        refresh: () => {}
+      };
+
+      registerCommands(
+        { subscriptions: [] } as any,
+        mockBridge,
+        {} as any,
+        {} as any,
+        { refresh: () => {} } as any,
+        {} as any,
+        {} as any,
+        mockVolumesProvider
+      );
+
+      const execResult = await vscode.commands.executeCommand('boxlite.createVolume');
+      if (execResult instanceof Error) {
+        throw execResult;
+      }
+
+      assert.strictEqual(createdVolume, true, 'Expected bridge.createVolume to have been called');
+      assert.strictEqual(withProgressCompleted, true, 'Expected withProgress to have completed');
+      assert.strictEqual(
+        messageShownWhileProgressPending,
+        false,
+        'showInformationMessage must not be called while withProgress is still pending'
+      );
+    } finally {
+      vscode.window.withProgress = originalWithProgress;
+      vscode.window.showInputBox = originalShowInputBox;
+      vscode.window.showInformationMessage = originalShowInfo;
+    }
+  });
+});
