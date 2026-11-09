@@ -38,6 +38,11 @@
           "id": "boxlite.boxesView",
           "name": "Boxes",
           "visibility": "visible"
+        },
+        {
+          "id": "boxlite.volumesView",
+          "name": "Volumes",
+          "visibility": "visible"
         }
       ]
     },
@@ -89,6 +94,12 @@
         "title": "Add New Box...",
         "category": "BoxLite",
         "icon": "$(add)"
+      },
+      {
+        "command": "boxlite.createBoxWithOptions",
+        "title": "Create Box with Options...",
+        "category": "BoxLite",
+        "icon": "$(gear)"
       },
       {
         "command": "boxlite.startBox",
@@ -173,6 +184,48 @@
         "title": "Open Documentation",
         "category": "BoxLite",
         "icon": "$(book)"
+      },
+      {
+        "command": "boxlite.refreshVolumes",
+        "title": "Refresh Volumes",
+        "category": "BoxLite",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "boxlite.createVolume",
+        "title": "Add New Volume...",
+        "category": "BoxLite",
+        "icon": "$(add)"
+      },
+      {
+        "command": "boxlite.deleteVolume",
+        "title": "Delete Volume",
+        "category": "BoxLite",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "boxlite.inspectVolume",
+        "title": "Inspect Volume (JSON)",
+        "category": "BoxLite",
+        "icon": "$(json)"
+      },
+      {
+        "command": "boxlite.copyVolumeId",
+        "title": "Copy Volume ID",
+        "category": "BoxLite",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "boxlite.copyVolumeName",
+        "title": "Copy Volume Name",
+        "category": "BoxLite",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "boxlite.addVolumeToBox",
+        "title": "Mount Volume in Box...",
+        "category": "BoxLite",
+        "icon": "$(link)"
       }
     ],
     "menus": {
@@ -188,9 +241,24 @@
           "group": "navigation@2"
         },
         {
-          "command": "boxlite.deploy",
+          "command": "boxlite.createBoxWithOptions",
           "when": "view == boxlite.boxesView",
           "group": "navigation@3"
+        },
+        {
+          "command": "boxlite.deploy",
+          "when": "view == boxlite.boxesView",
+          "group": "navigation@4"
+        },
+        {
+          "command": "boxlite.refreshVolumes",
+          "when": "view == boxlite.volumesView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "boxlite.createVolume",
+          "when": "view == boxlite.volumesView",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
@@ -200,9 +268,14 @@
           "group": "account@1"
         },
         {
-          "command": "boxlite.signOut",
+          "command": "boxlite.createBoxWithOptions",
           "when": "view == boxlite.boxesView && viewItem == 'account-signed-in'",
           "group": "account@2"
+        },
+        {
+          "command": "boxlite.signOut",
+          "when": "view == boxlite.boxesView && viewItem == 'account-signed-in'",
+          "group": "account@3"
         },
         {
           "command": "boxlite.openUrl",
@@ -283,6 +356,41 @@
           "command": "boxlite.deleteBox",
           "when": "view == boxlite.boxesView && viewItem =~ /^box-.*/",
           "group": "9_danger@1"
+        },
+        {
+          "command": "boxlite.createVolume",
+          "when": "view == boxlite.volumesView && viewItem == 'account-signed-in'",
+          "group": "account@1"
+        },
+        {
+          "command": "boxlite.signOut",
+          "when": "view == boxlite.volumesView && viewItem == 'account-signed-in'",
+          "group": "account@2"
+        },
+        {
+          "command": "boxlite.addVolumeToBox",
+          "when": "view == boxlite.volumesView && viewItem =~ /^volume-.*/",
+          "group": "1_mount@1"
+        },
+        {
+          "command": "boxlite.inspectVolume",
+          "when": "view == boxlite.volumesView && viewItem =~ /^volume-.*/",
+          "group": "2_inspect@1"
+        },
+        {
+          "command": "boxlite.copyVolumeId",
+          "when": "view == boxlite.volumesView && viewItem =~ /^volume-.*/",
+          "group": "3_copy@1"
+        },
+        {
+          "command": "boxlite.copyVolumeName",
+          "when": "view == boxlite.volumesView && viewItem =~ /^volume-.*/",
+          "group": "3_copy@2"
+        },
+        {
+          "command": "boxlite.deleteVolume",
+          "when": "view == boxlite.volumesView && viewItem =~ /^volume-.*/",
+          "group": "9_danger@1"
         }
       ]
     },
@@ -308,7 +416,49 @@
         "boxlite.autoStop": {
           "type": "number",
           "default": 0,
-          "description": "Default auto_stop seconds for created boxes (0 = never auto stop)"
+          "description": "Default auto_stop seconds for created boxes (0 = never auto stop, or >= 60 seconds)"
+        },
+        "boxlite.defaultImage": {
+          "type": "string",
+          "default": "python",
+          "description": "Default base image alias for created boxes (e.g. python, node, ubuntu, debian, alpine)"
+        },
+        "boxlite.defaultCpu": {
+          "type": "number",
+          "default": 2,
+          "description": "Default vCPU core count for created boxes"
+        },
+        "boxlite.defaultMemory": {
+          "type": "number",
+          "default": 4096,
+          "description": "Default memory limit in MiB for created boxes (e.g. 2048, 4096, 8192)"
+        },
+        "boxlite.defaultDisk": {
+          "type": "number",
+          "default": 20,
+          "description": "Default rootfs disk size in GB for created boxes"
+        },
+        "boxlite.defaultInboundMode": {
+          "type": "string",
+          "enum": ["enabled", "disabled"],
+          "default": "enabled",
+          "description": "Default inbound network proxy mode for created boxes"
+        },
+        "boxlite.defaultOutboundMode": {
+          "type": "string",
+          "enum": ["enabled", "disabled"],
+          "default": "enabled",
+          "description": "Default outbound network mode for created boxes (enabled or disabled)"
+        },
+        "boxlite.defaultAutoDelete": {
+          "type": "number",
+          "default": 0,
+          "description": "Default auto_delete seconds for created boxes (0 = persistent, manual removal only)"
+        },
+        "boxlite.defaultAutoResume": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether created boxes should automatically wake up when HTTP requests reach cloud proxy"
         }
       }
     }

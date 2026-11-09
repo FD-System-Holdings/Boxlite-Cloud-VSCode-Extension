@@ -2,6 +2,12 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 
+export interface VolumeMountConfig {
+  managed_volume: string;
+  guest_path: string;
+  read_only?: boolean;
+}
+
 export interface BoxliteProjectConfig {
   name: string;
   boxId?: string | null;
@@ -18,9 +24,15 @@ export interface BoxliteProjectConfig {
       allow_net?: string[];
     };
   };
-  env?: string[];
+  volumes?: VolumeMountConfig[];
+  env?: string[] | Record<string, string>;
   persistent?: boolean;
   autoStop?: number;
+  autoDelete?: number;
+  autoResume?: boolean;
+  cpus?: number;
+  memoryMib?: number;
+  diskSizeGb?: number;
 }
 
 export const DEFAULT_CONFIG: BoxliteProjectConfig = {
@@ -39,8 +51,14 @@ export const DEFAULT_CONFIG: BoxliteProjectConfig = {
       allow_net: []
     }
   },
+  volumes: [],
   persistent: true,
-  autoStop: 0
+  autoStop: 0,
+  autoDelete: 0,
+  autoResume: true,
+  cpus: 2,
+  memoryMib: 4096,
+  diskSizeGb: 20
 };
 
 export function buildSupervisorEntrypoint(startCmd: string = 'python3 -u server.py'): string[] {
@@ -71,6 +89,7 @@ export class ProjectManager {
       const merged: BoxliteProjectConfig = {
         ...DEFAULT_CONFIG,
         ...parsed,
+        volumes: parsed.volumes || DEFAULT_CONFIG.volumes || [],
         network: {
           inbound: parsed.network?.inbound || DEFAULT_CONFIG.network?.inbound,
           outbound: {
@@ -83,6 +102,30 @@ export class ProjectManager {
     } catch (e: any) {
       vscode.window.showErrorMessage(`Failed to parse boxlite.json: ${e.message}`);
       return undefined;
+    }
+  }
+
+  public static async addVolumeMount(
+    fileUri: vscode.Uri,
+    mount: VolumeMountConfig
+  ): Promise<void> {
+    try {
+      const content = fs.readFileSync(fileUri.fsPath, 'utf-8');
+      const json = JSON.parse(content);
+      const volumes: VolumeMountConfig[] = json.volumes || [];
+      const existingIdx = volumes.findIndex(
+        (v) => v.managed_volume === mount.managed_volume || v.guest_path === mount.guest_path
+      );
+      if (existingIdx >= 0) {
+        volumes[existingIdx] = mount;
+      } else {
+        volumes.push(mount);
+      }
+      json.volumes = volumes;
+      fs.writeFileSync(fileUri.fsPath, JSON.stringify(json, null, 2), 'utf-8');
+    } catch (e: any) {
+      console.error('Failed to update volumes in boxlite.json', e);
+      throw e;
     }
   }
 

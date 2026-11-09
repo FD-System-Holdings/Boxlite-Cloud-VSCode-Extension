@@ -38,6 +38,22 @@ def send_response(req_id: str, success: bool, data: Any = None, error: Optional[
     sys.stdout.flush()
 
 
+def extract_box_status(info: Any) -> str:
+    if not info:
+        return "unknown"
+    if isinstance(info, dict):
+        state_val = info.get("state")
+        raw = info.get("status") or (state_val.get("status") if isinstance(state_val, dict) else state_val)
+    else:
+        state_attr = getattr(info, "state", None)
+        raw = getattr(state_attr, "status", None) if state_attr is not None else getattr(info, "status", None)
+
+    raw_str = str(getattr(raw, "value", getattr(raw, "name", raw))).lower() if raw else "unknown"
+    if "." in raw_str:
+        raw_str = raw_str.split(".")[-1]
+    return raw_str.strip() or "unknown"
+
+
 class TunnelResultFallback:
     def __init__(self, data: Dict[str, Any]):
         self._uri = data.get("uri") or data.get("url")
@@ -238,6 +254,29 @@ class RestRuntimeFallback:
         await loop.run_in_executor(None, self._request, "PUT", f"/boxes/{box_id}/network/outbound", body)
         return {"mode": mode, "allow_net": allow_net}
 
+    async def list_volumes(self) -> List[Dict[str, Any]]:
+        loop = asyncio.get_running_loop()
+        res = await loop.run_in_executor(None, self._request, "GET", "/volumes")
+        if isinstance(res, dict) and "volumes" in res:
+            return res["volumes"]
+        if isinstance(res, list):
+            return res
+        return []
+
+    async def get_volume(self, volume_id: str) -> Dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._request, "GET", f"/volumes/{volume_id}")
+
+    async def create_volume(self, name: Optional[str] = None) -> Dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        body = {"name": name} if name else {}
+        return await loop.run_in_executor(None, self._request, "POST", "/volumes", body)
+
+    async def remove_volume(self, volume_id: str, force: bool = False) -> None:
+        loop = asyncio.get_running_loop()
+        path = f"/volumes/{volume_id}?force=true" if force else f"/volumes/{volume_id}"
+        await loop.run_in_executor(None, self._request, "DELETE", path)
+
 
 class BoxLiteBridge:
     def __init__(self):
@@ -309,22 +348,17 @@ class BoxLiteBridge:
             if isinstance(b, dict):
                 b_id = b.get("id") or b.get("box_id") or ""
                 b_name = b.get("name") or ""
-                state_val = b.get("state")
-                raw_status = b.get("status") or (state_val.get("status") if isinstance(state_val, dict) else state_val)
                 b_image = b.get("image") or "python"
                 b_tunnels = b.get("tunnels")
             else:
                 b_id = getattr(b, "id", None) or getattr(b, "box_id", None) or str(b)
                 b_name = getattr(b, "name", "") or ""
-                state_attr = getattr(b, "state", None)
-                raw_status = getattr(state_attr, "status", None) if state_attr is not None else getattr(b, "status", None)
                 b_image = getattr(b, "image", None) or "python"
                 b_tunnels = getattr(b, "tunnels", None)
 
-            raw_str = str(getattr(raw_status, "value", getattr(raw_status, "name", raw_status))).lower() if raw_status else "unknown"
-            if "." in raw_str:
-                raw_str = raw_str.split(".")[-1]
-            b_status = raw_str.strip()
+            b_volumes = b.get("volumes") if isinstance(b, dict) else getattr(b, "volumes", None)
+
+            b_status = extract_box_status(b)
 
             box_info = {
                 "id": b_id,
@@ -334,6 +368,8 @@ class BoxLiteBridge:
             }
             if b_tunnels is not None:
                 box_info["tunnels"] = b_tunnels
+            if b_volumes:
+                box_info["volumes"] = b_volumes
             result.append(box_info)
         return {"boxes": result}
 
@@ -362,11 +398,19 @@ class BoxLiteBridge:
         image = args.get("image", "python")
         auto_remove = args.get("autoRemove", False)
         auto_stop = args.get("autoStop", args.get("auto_stop", 0))
+        auto_delete = args.get("autoDelete", args.get("auto_delete", 0))
+        auto_resume = args.get("autoResume", args.get("auto_resume", True))
+        cpus = args.get("cpus", args.get("cpu"))
+        memory_mib = args.get("memoryMib", args.get("memory_mib"))
+        disk_size_gb = args.get("diskSizeGb", args.get("disk_size_gb"))
         entrypoint = args.get("entrypoint")
+        cmd = args.get("cmd")
+        env = args.get("env")
         network_spec = args.get("network")
+        volumes = args.get("volumes")
 
         if isinstance(rt, RestRuntimeFallback):
-            # BoxLite Cloud REST API conforms to OpenAPI CreateBoxRequest (additionalProperties: false).
+            # BoxLite Cloud REST API conforms to OpenAPI CreateBoxRequest.
             # 'auto_remove' is deprecated/client-side and MUST NOT be sent across the wire.
             kwargs: Dict[str, Any] = {
                 "image": image or "python",
@@ -378,14 +422,29 @@ class BoxLiteBridge:
                 if 0 < auto_stop < 60:
                     auto_stop = 60
                 kwargs["auto_stop"] = auto_stop
-            if "autoDelete" in args and args["autoDelete"] is not None:
-                kwargs["auto_delete"] = args["autoDelete"]
-            elif "auto_delete" in args and args["auto_delete"] is not None:
-                kwargs["auto_delete"] = args["auto_delete"]
+            if auto_delete is not None and auto_delete > 0:
+                kwargs["auto_delete"] = auto_delete
+            if auto_resume is not None:
+                kwargs["auto_resume"] = auto_resume
+            if cpus is not None:
+                kwargs["cpus"] = cpus
+                kwargs["cpu"] = cpus
+            if memory_mib is not None:
+                kwargs["memory_mib"] = memory_mib
+                kwargs["memory"] = round(memory_mib / 1024, 2)
+            if disk_size_gb is not None:
+                kwargs["disk_size_gb"] = disk_size_gb
+                kwargs["disk"] = disk_size_gb
+            if env:
+                kwargs["env"] = env
+            if cmd:
+                kwargs["cmd"] = cmd
             if entrypoint:
                 kwargs["entrypoint"] = entrypoint
             if network_spec:
                 kwargs["network"] = network_spec
+            if volumes:
+                kwargs["volumes"] = volumes
 
             res = await rt.create(**kwargs)
             box_id = res.get("box_id") or res.get("id") or name
@@ -424,17 +483,46 @@ class BoxLiteBridge:
             kwargs["name"] = name
         if auto_stop is not None:
             kwargs["auto_stop"] = auto_stop
+        if auto_delete is not None and auto_delete > 0:
+            kwargs["auto_delete"] = auto_delete
+        if auto_resume is not None:
+            kwargs["auto_resume"] = auto_resume
+        if cpus is not None:
+            kwargs["cpus"] = cpus
+        if memory_mib is not None:
+            kwargs["memory_mib"] = memory_mib
+        if disk_size_gb is not None:
+            kwargs["disk_size_gb"] = disk_size_gb
+        if env:
+            kwargs["env"] = list(env.items()) if isinstance(env, dict) else env
+        if cmd:
+            kwargs["cmd"] = cmd
         if entrypoint:
             kwargs["entrypoint"] = entrypoint
         if net:
             kwargs["network"] = net
+        if volumes:
+            kwargs["volumes"] = [
+                {
+                    "managed_volume": v.get("managed_volume") or v.get("managedVolume"),
+                    "guest_path": v.get("guest_path") or v.get("guestPath"),
+                    "read_only": v.get("read_only", v.get("readOnly", False))
+                }
+                for v in volumes
+            ]
 
         try:
             box = boxlite.SimpleBox(**kwargs)
-        except TypeError:
-            # Fallback if installed boxlite wheel rejects auto_stop or other kwargs
-            kwargs.pop("auto_stop", None)
-            box = boxlite.SimpleBox(**kwargs)
+        except TypeError as e:
+            # Drop newer optional kwargs if the installed wheel rejects them
+            log_debug(f"SimpleBox init with all options failed ({e}); falling back with core options.")
+            for key in ["auto_resume", "auto_delete", "disk_size_gb", "memory_mib", "cpus", "env", "cmd", "volumes"]:
+                kwargs.pop(key, None)
+            try:
+                box = boxlite.SimpleBox(**kwargs)
+            except TypeError:
+                kwargs.pop("auto_stop", None)
+                box = boxlite.SimpleBox(**kwargs)
 
         await box.start()
         box_id = box.id
@@ -455,11 +543,7 @@ class BoxLiteBridge:
         for _ in range(16):
             try:
                 info = await rt.inspect(box_id) if hasattr(rt, "inspect") else None
-                st = ""
-                if isinstance(info, dict):
-                    st = str(info.get("status", "")).lower().strip()
-                elif hasattr(info, "status"):
-                    st = str(getattr(info, "status", "")).lower().strip()
+                st = extract_box_status(info)
                 if st in ("running", "ready", "active"):
                     return {"boxId": box_id, "status": st}
             except Exception:
@@ -482,11 +566,7 @@ class BoxLiteBridge:
         for _ in range(16):
             try:
                 info = await rt.inspect(box_id) if hasattr(rt, "inspect") else None
-                st = ""
-                if isinstance(info, dict):
-                    st = str(info.get("status", "")).lower().strip()
-                elif hasattr(info, "status"):
-                    st = str(getattr(info, "status", "")).lower().strip()
+                st = extract_box_status(info)
                 if st in ("stopped", "terminated", "exited", "configured", "paused", "inactive", "shutdown"):
                     return {"boxId": box_id, "status": st}
             except Exception:
@@ -645,12 +725,8 @@ class BoxLiteBridge:
         # Prevent waking up stopped boxes with tail execution
         try:
             info = await rt.inspect(box_id) if hasattr(rt, "inspect") else None
-            status = ""
-            if isinstance(info, dict):
-                status = str(info.get("status", "")).lower().strip()
-            elif hasattr(info, "status"):
-                status = str(getattr(info, "status", "")).lower().strip()
-            if status in ("stopped", "terminated", "exited"):
+            status = extract_box_status(info)
+            if status not in ("running", "ready", "active"):
                 return {
                     "boxId": box_id,
                     "content": "",
@@ -659,7 +735,13 @@ class BoxLiteBridge:
                     "stopped": True
                 }
         except Exception:
-            pass
+            return {
+                "boxId": box_id,
+                "content": "",
+                "exitCode": 0,
+                "status": "stopped",
+                "stopped": True
+            }
 
         box = self.get_or_attach_box(box_id)
 
@@ -679,6 +761,153 @@ class BoxLiteBridge:
             "content": stdout,
             "exitCode": exit_code
         }
+
+    async def handle_list_volumes(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        volumes = []
+        if hasattr(rt, "volumes") and callable(rt.volumes):
+            try:
+                handle = rt.volumes()
+                volumes = await handle.list()
+            except Exception as e:
+                log_debug(f"rt.volumes().list() failed ({e}), falling back to REST")
+                fallback = RestRuntimeFallback(
+                    os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+                    os.environ.get("BOXLITE_API_KEY", "")
+                )
+                volumes = await fallback.list_volumes()
+        elif hasattr(rt, "list_volumes"):
+            volumes = await rt.list_volumes()
+
+        result = []
+        for v in volumes:
+            if isinstance(v, dict):
+                v_id = v.get("id") or v.get("volume_id") or ""
+                v_name = v.get("name") or v_id
+                v_state = v.get("state") or "ready"
+                v_created = v.get("created_at") or v.get("createdAt")
+                v_updated = v.get("updated_at") or v.get("updatedAt")
+                v_size = v.get("size_bytes") or v.get("sizeBytes")
+            else:
+                v_id = getattr(v, "id", None) or getattr(v, "volume_id", "") or str(v)
+                v_name = getattr(v, "name", "") or v_id
+                v_state = getattr(v, "state", "ready")
+                v_created = getattr(v, "created_at", None)
+                if hasattr(v_created, "to_rfc3339"):
+                    v_created = v_created.to_rfc3339()
+                elif hasattr(v_created, "isoformat"):
+                    v_created = v_created.isoformat()
+                else:
+                    v_created = str(v_created) if v_created else None
+                v_updated = getattr(v, "updated_at", None)
+                if hasattr(v_updated, "to_rfc3339"):
+                    v_updated = v_updated.to_rfc3339()
+                elif hasattr(v_updated, "isoformat"):
+                    v_updated = v_updated.isoformat()
+                else:
+                    v_updated = str(v_updated) if v_updated else None
+                v_size = getattr(v, "size_bytes", None)
+
+            result.append({
+                "id": v_id,
+                "name": v_name,
+                "state": str(v_state).lower() if v_state else "ready",
+                "createdAt": v_created,
+                "updatedAt": v_updated,
+                "sizeBytes": v_size
+            })
+        return {"volumes": result}
+
+    async def handle_create_volume(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        name = args.get("name")
+        if hasattr(rt, "volumes") and callable(rt.volumes):
+            try:
+                handle = rt.volumes()
+                info = await handle.create(name=name)
+                v_id = getattr(info, "id", None) or getattr(info, "volume_id", "")
+                v_name = getattr(info, "name", "") or v_id
+                v_state = getattr(info, "state", "ready")
+                v_created = getattr(info, "created_at", None)
+                if hasattr(v_created, "to_rfc3339"):
+                    v_created = v_created.to_rfc3339()
+                elif hasattr(v_created, "isoformat"):
+                    v_created = v_created.isoformat()
+                else:
+                    v_created = str(v_created) if v_created else None
+                return {
+                    "id": v_id,
+                    "name": v_name,
+                    "state": str(v_state).lower() if v_state else "ready",
+                    "createdAt": v_created
+                }
+            except Exception as e:
+                log_debug(f"rt.volumes().create() failed ({e}), falling back to REST")
+
+        fallback = RestRuntimeFallback(
+            os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+            os.environ.get("BOXLITE_API_KEY", "")
+        )
+        res = await fallback.create_volume(name=name)
+        v_id = res.get("id") or res.get("volume_id") or ""
+        v_name = res.get("name") or v_id
+        v_state = res.get("state") or "ready"
+        v_created = res.get("created_at") or res.get("createdAt")
+        return {
+            "id": v_id,
+            "name": v_name,
+            "state": str(v_state).lower() if v_state else "ready",
+            "createdAt": v_created
+        }
+
+    async def handle_inspect_volume(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        volume_id = args["volumeId"]
+        if hasattr(rt, "volumes") and callable(rt.volumes):
+            try:
+                handle = rt.volumes()
+                info = await handle.get(volume_id)
+                if hasattr(info, "to_dict"):
+                    data = info.to_dict()
+                elif hasattr(info, "__dict__"):
+                    data = {k: v for k, v in info.__dict__.items() if not k.startswith("_")}
+                else:
+                    data = {
+                        "id": getattr(info, "id", volume_id),
+                        "name": getattr(info, "name", volume_id),
+                        "state": getattr(info, "state", "ready"),
+                        "created_at": getattr(info, "created_at", None),
+                        "size_bytes": getattr(info, "size_bytes", None)
+                    }
+                return {"volume": data}
+            except Exception as e:
+                log_debug(f"rt.volumes().get() failed ({e}), falling back to REST")
+
+        fallback = RestRuntimeFallback(
+            os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+            os.environ.get("BOXLITE_API_KEY", "")
+        )
+        res = await fallback.get_volume(volume_id)
+        return {"volume": res}
+
+    async def handle_remove_volume(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        volume_id = args["volumeId"]
+        force = bool(args.get("force", False))
+        if hasattr(rt, "volumes") and callable(rt.volumes):
+            try:
+                handle = rt.volumes()
+                await handle.remove(volume_id, force=force)
+                return {"volumeId": volume_id, "removed": True}
+            except Exception as e:
+                log_debug(f"rt.volumes().remove() failed ({e}), falling back to REST")
+
+        fallback = RestRuntimeFallback(
+            os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+            os.environ.get("BOXLITE_API_KEY", "")
+        )
+        await fallback.remove_volume(volume_id, force=force)
+        return {"volumeId": volume_id, "removed": True}
 
     async def dispatch(self, req: Dict[str, Any]):
         req_id = req.get("id", "none")

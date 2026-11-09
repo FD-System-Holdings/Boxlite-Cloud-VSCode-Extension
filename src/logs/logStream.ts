@@ -104,7 +104,14 @@ export class LogStreamManager implements vscode.Disposable {
         }
       } catch (err: any) {
         const msg = (err.message || '').toLowerCase();
-        if (msg.includes('stopped') || msg.includes('not running') || msg.includes('inactive')) {
+        if (
+          msg.includes('stopped') ||
+          msg.includes('stopping') ||
+          msg.includes('not running') ||
+          msg.includes('inactive') ||
+          msg.includes('terminated') ||
+          msg.includes('exited')
+        ) {
           channel!.appendLine(`[boxlite] Box is not running. Log streaming paused.`);
           this.stopStreaming(boxId);
           return;

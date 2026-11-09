@@ -87,6 +87,12 @@ export class BoxLiteDeployer {
             // Supervisor entrypoint ensures PID 1 stays alive and restarts app when server.py exists
             const supervisor = buildSupervisorEntrypoint(config.start || 'python3 -u server.py');
 
+            if (config.volumes && config.volumes.length > 0) {
+              for (const v of config.volumes) {
+                this.outputChannel.appendLine(`[deploy] Mounting volume '${v.managed_volume}' at '${v.guest_path}'`);
+              }
+            }
+
             const created = await this.bridge.createBox({
               name: boxName,
               image: config.image || 'python',
@@ -99,7 +105,8 @@ export class BoxLiteDeployer {
                   mode: config.network?.outbound?.mode || 'enabled',
                   allow_net: config.network?.outbound?.allow_net || []
                 }
-              }
+              },
+              volumes: config.volumes && config.volumes.length > 0 ? config.volumes : undefined
             });
 
             boxId = created.boxId;

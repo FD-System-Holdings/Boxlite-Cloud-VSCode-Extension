@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { BoxListItem, TunnelInfo } from '../bridge/protocol';
+import { BoxListItem, TunnelInfo, VolumeItem } from '../bridge/protocol';
 
 export abstract class BoxLiteTreeItem extends vscode.TreeItem {
   constructor(
@@ -82,6 +82,59 @@ export class BoxChildTreeItem extends BoxLiteTreeItem {
     collapsible: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
     contextValue?: string,
     public readonly boxId?: string
+  ) {
+    super(label, collapsible);
+    this.description = description;
+    if (icon) {
+      this.iconPath = new vscode.ThemeIcon(icon);
+    }
+    this.command = command;
+    this.contextValue = contextValue;
+  }
+}
+
+export class VolumeTreeItem extends BoxLiteTreeItem {
+  public readonly volume: VolumeItem;
+
+  constructor(volume: VolumeItem) {
+    super(volume.name || `vol-${volume.id.substring(0, 8)}`, vscode.TreeItemCollapsibleState.Collapsed);
+    this.volume = volume;
+
+    const state = (volume.state || 'ready').toLowerCase().trim();
+    const isReady = state === 'ready';
+    const isDeleting = state === 'deleting' || state === 'pending_delete' || state === 'deleted';
+    const isError = state === 'error';
+    const isCreating = state === 'creating' || state === 'pending_create';
+
+    const shortId = volume.id.length > 8 ? volume.id.substring(0, 8) : volume.id;
+    this.description = `${state} · ${shortId}`;
+    this.tooltip = `Volume ID: ${volume.id}\nName: ${volume.name}\nState: ${state}\nCreated: ${volume.createdAt || 'N/A'}`;
+
+    if (isReady) {
+      this.iconPath = new vscode.ThemeIcon('database', new vscode.ThemeColor('symbolIcon.fieldForeground'));
+    } else if (isCreating) {
+      this.iconPath = new vscode.ThemeIcon('sync~spin');
+    } else if (isDeleting) {
+      this.iconPath = new vscode.ThemeIcon('trash');
+    } else if (isError) {
+      this.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('testing.iconFailed'));
+    } else {
+      this.iconPath = new vscode.ThemeIcon('database');
+    }
+
+    this.contextValue = `volume-item volume-${state}${isReady ? '-ready' : ''}${isDeleting ? '-deleting' : ''}${isError ? '-error' : ''}`;
+  }
+}
+
+export class VolumeChildTreeItem extends BoxLiteTreeItem {
+  constructor(
+    label: string,
+    description?: string,
+    icon?: string,
+    command?: vscode.Command,
+    collapsible: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
+    contextValue?: string,
+    public readonly volumeId?: string
   ) {
     super(label, collapsible);
     this.description = description;

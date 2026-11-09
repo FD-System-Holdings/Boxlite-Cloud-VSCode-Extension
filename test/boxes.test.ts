@@ -147,6 +147,48 @@ describe('Box Tree Items and Lifecycle Management', () => {
 
     const commands = accountMenus.map((m: any) => m.command);
     assert.ok(commands.includes('boxlite.createBox'), 'Expected createBox in account context menu');
+    assert.ok(commands.includes('boxlite.createBoxWithOptions'), 'Expected createBoxWithOptions in account context menu');
     assert.ok(commands.includes('boxlite.signOut'), 'Expected signOut in account context menu');
+  });
+
+  it('should stop log streaming immediately before stopping box', async () => {
+    const vscode = require('vscode');
+    const { registerCommands } = require('../src/commands');
+
+    const executionOrder: string[] = [];
+    const mockBridge: any = {
+      stopBox: async (_id: string) => {
+        executionOrder.push('bridge.stopBox');
+        return { boxId: _id, status: 'stopped' };
+      }
+    };
+    const mockLogManager: any = {
+      stopStreaming: (_id: string) => {
+        executionOrder.push('logManager.stopStreaming');
+      }
+    };
+    const mockTreeProvider: any = {
+      refresh: () => {}
+    };
+
+    const subscriptions: any[] = [];
+    registerCommands(
+      { subscriptions } as any,
+      mockBridge,
+      {} as any,
+      {} as any,
+      mockTreeProvider,
+      {} as any,
+      mockLogManager
+    );
+
+    const boxItem = new BoxTreeItem({
+      id: 'box-test-order',
+      name: 'test-box',
+      status: 'running'
+    });
+
+    await vscode.commands.executeCommand('boxlite.stopBox', boxItem);
+    assert.deepStrictEqual(executionOrder, ['logManager.stopStreaming', 'bridge.stopBox']);
   });
 });

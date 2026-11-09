@@ -173,6 +173,27 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
         )
       );
 
+      // 3b. Mounted Volumes
+      if (element.box.volumes && element.box.volumes.length > 0) {
+        for (const v of element.box.volumes) {
+          children.push(
+            new BoxChildTreeItem(
+              `Volume: ${v.managed_volume}`,
+              `Mounted at ${v.guest_path}${v.read_only ? ' (ro)' : ''}`,
+              'database',
+              {
+                command: 'boxlite.inspectBox',
+                title: 'Inspect Box Volumes',
+                arguments: [element]
+              },
+              vscode.TreeItemCollapsibleState.None,
+              'box-volume-item',
+              element.box.id
+            )
+          );
+        }
+      }
+
       // 4. Application Logs
       const isStreaming = this.logManager?.isStreaming(element.box.id);
       children.push(

@@ -9,7 +9,9 @@ import {
   CreateBoxArgs,
   ExecResult,
   TunnelResult,
-  TailLogResult
+  TailLogResult,
+  VolumeItem,
+  CreateVolumeArgs
 } from './protocol';
 import { CredentialsManager } from '../auth/credentials';
 import { PythonEnvManager } from './env';
@@ -239,6 +241,25 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
 
   public async tailLog(boxId: string, logFile = '/tmp/server.log', lines = 100): Promise<TailLogResult> {
     return this.sendRequest<TailLogResult>('tail_log', { boxId, logFile, lines }, 15000);
+  }
+
+  // Volume Operations
+  public async listVolumes(): Promise<VolumeItem[]> {
+    const res = await this.sendRequest<{ volumes: VolumeItem[] }>('list_volumes', {}, 20000);
+    return res.volumes || [];
+  }
+
+  public async createVolume(args: CreateVolumeArgs = {}): Promise<VolumeItem> {
+    return this.sendRequest<VolumeItem>('create_volume', args, 60000);
+  }
+
+  public async inspectVolume(volumeId: string): Promise<any> {
+    const res = await this.sendRequest<{ volume: any }>('inspect_volume', { volumeId }, 20000);
+    return res.volume;
+  }
+
+  public async removeVolume(volumeId: string, force = false): Promise<{ volumeId: string; removed: boolean }> {
+    return this.sendRequest<{ volumeId: string; removed: boolean }>('remove_volume', { volumeId, force }, 30000);
   }
 
   public restartBridge() {

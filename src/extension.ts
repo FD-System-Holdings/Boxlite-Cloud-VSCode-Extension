@@ -3,6 +3,7 @@ import { CredentialsManager } from './auth/credentials';
 import { PythonEnvManager } from './bridge/env';
 import { BoxLiteBridgeClient } from './bridge/client';
 import { BoxesTreeDataProvider } from './tree/boxesProvider';
+import { VolumesTreeDataProvider } from './tree/volumesProvider';
 import { BoxLiteDeployer } from './deploy/deployer';
 import { LogStreamManager } from './logs/logStream';
 import { registerCommands } from './commands';
@@ -30,12 +31,22 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(treeView);
 
+  const volumesProvider = new VolumesTreeDataProvider(bridge, credentials);
+  const volumesTreeView = vscode.window.createTreeView('boxlite.volumesView', {
+    treeDataProvider: volumesProvider,
+    showCollapseAll: true
+  });
+  context.subscriptions.push(volumesTreeView);
+
   const deployer = new BoxLiteDeployer(
     bridge,
     credentials,
     logManager,
     outputChannel,
-    () => treeProvider.refresh()
+    () => {
+      treeProvider.refresh();
+      volumesProvider.refresh();
+    }
   );
 
   // Register all commands
@@ -46,7 +57,8 @@ export async function activate(context: vscode.ExtensionContext) {
     envManager,
     treeProvider,
     deployer,
-    logManager
+    logManager,
+    volumesProvider
   );
 
   // Status Bar Item

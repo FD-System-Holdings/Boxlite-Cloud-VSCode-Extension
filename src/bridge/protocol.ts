@@ -31,6 +31,26 @@ export interface BoxListItem {
   status: 'running' | 'stopped' | 'provisioning' | 'error' | string;
   image?: string;
   tunnels?: TunnelInfo[];
+  volumes?: VolumeMountSpec[];
+}
+
+export interface VolumeMountSpec {
+  managed_volume: string;
+  guest_path: string;
+  read_only?: boolean;
+}
+
+export interface VolumeItem {
+  id: string;
+  name: string;
+  state?: 'creating' | 'ready' | 'pending_create' | 'pending_delete' | 'deleting' | 'deleted' | 'error' | string;
+  createdAt?: string;
+  updatedAt?: string;
+  sizeBytes?: number;
+}
+
+export interface CreateVolumeArgs {
+  name?: string;
 }
 
 export interface NetworkConfig {
@@ -49,8 +69,15 @@ export interface CreateBoxArgs {
   autoRemove?: boolean;
   autoStop?: number;
   autoDelete?: number;
+  autoResume?: boolean;
+  cpus?: number;
+  memoryMib?: number;
+  diskSizeGb?: number;
   entrypoint?: string[];
+  cmd?: string[];
+  env?: Record<string, string>;
   network?: NetworkConfig;
+  volumes?: VolumeMountSpec[];
 }
 
 export interface ExecArgs {

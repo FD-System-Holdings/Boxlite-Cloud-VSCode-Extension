@@ -1,15 +1,24 @@
 import * as vscode from 'vscode';
 import { BoxLiteBridgeClient } from '../bridge/client';
+import { CreateBoxArgs } from '../bridge/protocol';
 import { CredentialsManager } from '../auth/credentials';
 import { PythonEnvManager } from '../bridge/env';
 import { BoxesTreeDataProvider } from '../tree/boxesProvider';
-import { BoxTreeItem } from '../tree/nodes';
+import { VolumesTreeDataProvider } from '../tree/volumesProvider';
+import { BoxTreeItem, VolumeTreeItem } from '../tree/nodes';
 import { BoxLiteDeployer } from '../deploy/deployer';
 import { scaffoldNewProject } from '../deploy/scaffold';
-import { buildSupervisorEntrypoint } from '../deploy/project';
+import { ProjectManager } from '../deploy/project';
 import { LogStreamManager } from '../logs/logStream';
-import { validateNetworkPolicy, validateAllowlistRule } from '../util/validation';
+import { validateNetworkPolicy, validateAllowlistRule, validateVolumeName, validateGuestPath } from '../util/validation';
 import { diagnoseError } from '../util/diagnosis';
+import {
+  showBoxConfigurationWizard,
+  BOX_TEMPLATES,
+  convertBoxConfigToCreateArgs,
+  getDefaultBoxConfiguration,
+  generateBoxName
+} from './boxConfiguration';
 
 export function registerCommands(
   context: vscode.ExtensionContext,
@@ -18,7 +27,8 @@ export function registerCommands(
   envManager: PythonEnvManager,
   treeProvider: BoxesTreeDataProvider,
   deployer: BoxLiteDeployer,
-  logManager: LogStreamManager
+  logManager: LogStreamManager,
+  volumesProvider?: VolumesTreeDataProvider
 ) {
   // 1. Auth commands
   context.subscriptions.push(
@@ -27,6 +37,7 @@ export function registerCommands(
       if (key) {
         bridge.restartBridge();
         treeProvider.refresh();
+        volumesProvider?.refresh();
       }
     })
   );
@@ -42,6 +53,7 @@ export function registerCommands(
         await credentials.clearApiKey();
         bridge.restartBridge();
         treeProvider.refresh();
+        volumesProvider?.refresh();
         vscode.window.showInformationMessage('Logged out of BoxLite Cloud.');
       }
     })
@@ -51,6 +63,7 @@ export function registerCommands(
   context.subscriptions.push(
     vscode.commands.registerCommand('boxlite.refresh', async () => {
       treeProvider.refresh();
+      volumesProvider?.refresh();
     })
   );
 
@@ -88,50 +101,134 @@ export function registerCommands(
     })
   );
 
-  // 6. Create Box
+  // Shared helper for box creation
+  async function performCreateBox(args: CreateBoxArgs): Promise<void> {
+    const boxName = args.name || 'new-box';
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Creating Box ${boxName}...` },
+      async () => {
+        try {
+          const res = await bridge.createBox(args);
+          vscode.window.showInformationMessage(`Box "${boxName}" created (ID: ${res.boxId}).`);
+          treeProvider.refresh();
+        } catch (e: any) {
+          const diag = diagnoseError(e.message);
+          const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
+          vscode.window.showErrorMessage(`Failed to create Box: ${msg}`);
+        }
+      }
+    );
+  }
+
+  // 6. Create Box with Options (Interactive Configuration Wizard)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.createBoxWithOptions', async () => {
+      const args = await showBoxConfigurationWizard();
+      if (args) {
+        await performCreateBox(args);
+      }
+    })
+  );
+
+  // 6b. Create Box (Quick Pick: Custom Options Wizard, Templates, or Quick Create)
   context.subscriptions.push(
     vscode.commands.registerCommand('boxlite.createBox', async () => {
-      const name = await vscode.window.showInputBox({
-        prompt: 'Enter a name for the new Box',
-        value: `box-${Math.random().toString(16).substring(2, 8)}`,
-        validateInput: (v) => (!v.trim() ? 'Name cannot be empty' : null)
+      const choices = [
+        {
+          label: '$(gear) Configure Box Options...',
+          description: 'Interactive configuration wizard',
+          detail: 'Customize vCPU, RAM, disk, network policies, auto-stop, and environment variables',
+          action: 'wizard'
+        },
+        {
+          label: '$(file-code) Choose from Template...',
+          description: 'Python Web App · Node.js · Secure Box · Air-Gapped Sandbox',
+          detail: 'Start with an agent-verified configuration profile (§1, §2, §3)',
+          action: 'template'
+        },
+        {
+          label: '$(zap) Quick Create (Standard Python Box)',
+          description: 'python image · 2 vCPU · 4 GB RAM · Supervisor entrypoint · Port 8080',
+          detail: 'Fast one-click creation using canonical defaults (§1)',
+          action: 'quick'
+        }
+      ];
+
+      const choice = await vscode.window.showQuickPick(choices, {
+        title: 'Create New BoxLite Instance',
+        placeHolder: 'Select how you want to configure your new Box'
       });
-      if (!name) {
+
+      if (!choice) {
         return;
       }
 
-      const image = await vscode.window.showInputBox({
-        prompt: 'Enter base image (default: python)',
-        value: 'python'
-      });
-
-      await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: `Creating Box ${name}...` },
-        async () => {
-          try {
-            const config = vscode.workspace.getConfiguration('boxlite');
-            const defaultAutoStop = config.get<number>('autoStop', 0);
-            const supervisor = buildSupervisorEntrypoint();
-            const res = await bridge.createBox({
-              name: name.trim(),
-              image: (image && image.trim()) || 'python',
-              autoRemove: false,
-              autoStop: defaultAutoStop,
-              entrypoint: supervisor,
-              network: {
-                inbound: { mode: 'enabled' },
-                outbound: { mode: 'enabled', allow_net: [] }
-              }
-            });
-            vscode.window.showInformationMessage(`Box "${name}" created (ID: ${res.boxId}).`);
-            treeProvider.refresh();
-          } catch (e: any) {
-            const diag = diagnoseError(e.message);
-            const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
-            vscode.window.showErrorMessage(`Failed to create Box: ${msg}`);
-          }
+      if (choice.action === 'wizard') {
+        const args = await showBoxConfigurationWizard();
+        if (args) {
+          await performCreateBox(args);
         }
-      );
+      } else if (choice.action === 'template') {
+        const tmplItems = BOX_TEMPLATES.map((t) => ({
+          label: t.label,
+          description: t.description,
+          detail: t.detail,
+          template: t
+        }));
+        const selectedTmpl = await vscode.window.showQuickPick(tmplItems, {
+          title: 'Select BoxLite Template',
+          placeHolder: 'Choose a template for your new Box'
+        });
+        if (!selectedTmpl) {
+          return;
+        }
+
+        const nextAction = await vscode.window.showQuickPick(
+          [
+            { label: '$(check) Create Immediately with Template Defaults', action: 'create' },
+            { label: '$(gear) Customize Template Options First...', action: 'customize' }
+          ],
+          { title: `Template: ${selectedTmpl.template.label}` }
+        );
+
+        if (!nextAction) {
+          return;
+        }
+
+        if (nextAction.action === 'customize') {
+          const args = await showBoxConfigurationWizard({
+            ...selectedTmpl.template.config,
+            name: generateBoxName()
+          });
+          if (args) {
+            await performCreateBox(args);
+          }
+        } else {
+          const config = {
+            ...getDefaultBoxConfiguration(),
+            ...selectedTmpl.template.config,
+            name: generateBoxName()
+          };
+          const args = convertBoxConfigToCreateArgs(config);
+          await performCreateBox(args);
+        }
+      } else if (choice.action === 'quick') {
+        const name = await vscode.window.showInputBox({
+          prompt: 'Enter a name for the new Box',
+          value: generateBoxName(),
+          validateInput: (v) => (!v.trim() ? 'Name cannot be empty' : null)
+        });
+        if (!name) {
+          return;
+        }
+
+        const config = {
+          ...getDefaultBoxConfiguration(),
+          name: name.trim()
+        };
+        const args = convertBoxConfigToCreateArgs(config);
+        await performCreateBox(args);
+      }
     })
   );
 
@@ -169,8 +266,8 @@ export function registerCommands(
         { location: vscode.ProgressLocation.Notification, title: `Stopping Box ${boxId.substring(0, 8)}...` },
         async () => {
           try {
-            await bridge.stopBox(boxId);
             logManager.stopStreaming(boxId);
+            await bridge.stopBox(boxId);
             vscode.window.showInformationMessage(`Box stopped successfully.`);
             treeProvider.refresh();
           } catch (e: any) {
@@ -226,8 +323,8 @@ export function registerCommands(
         { location: vscode.ProgressLocation.Notification, title: `Deleting Box ${boxName}...` },
         async () => {
           try {
-            await bridge.removeBox(boxId);
             logManager.stopStreaming(boxId);
+            await bridge.removeBox(boxId);
             vscode.window.showInformationMessage(`Box "${boxName}" deleted.`);
             treeProvider.refresh();
           } catch (e: any) {
@@ -493,6 +590,196 @@ export function registerCommands(
       vscode.env.openExternal(vscode.Uri.parse('https://boxlite.ai/agent.md'));
     })
   );
+
+  // 15. Volume Commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.refreshVolumes', async () => {
+      volumesProvider?.refresh();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.createVolume', async () => {
+      const name = await vscode.window.showInputBox({
+        prompt: 'Enter name for the managed persistent volume (leave empty for auto-assigned)',
+        placeHolder: 'e.g. app-data, db-storage',
+        validateInput: (v) => {
+          if (v && v.trim()) {
+            const check = validateVolumeName(v.trim());
+            if (!check.valid) {
+              return check.error;
+            }
+          }
+          return null;
+        }
+      });
+      if (name === undefined) {
+        return;
+      }
+
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Creating BoxLite persistent volume${name.trim() ? ` "${name.trim()}"` : ''}...`
+        },
+        async () => {
+          try {
+            const vol = await bridge.createVolume({
+              name: name.trim() ? name.trim() : undefined
+            });
+            volumesProvider?.refresh();
+            const choice = await vscode.window.showInformationMessage(
+              `Volume "${vol.name}" created (ID: ${vol.id}).`,
+              'Mount in Box...',
+              'Copy ID'
+            );
+            if (choice === 'Mount in Box...') {
+              await vscode.commands.executeCommand('boxlite.addVolumeToBox', vol);
+            } else if (choice === 'Copy ID') {
+              await vscode.env.clipboard.writeText(vol.id);
+            }
+          } catch (e: any) {
+            const diag = diagnoseError(e.message);
+            const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
+            vscode.window.showErrorMessage(`Failed to create volume: ${msg}`);
+          }
+        }
+      );
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.deleteVolume', async (item?: any) => {
+      const vol = await resolveVolume(item, bridge);
+      if (!vol) {
+        return;
+      }
+
+      const confirm = await vscode.window.showWarningMessage(
+        `Are you sure you want to delete volume "${vol.name}" (${vol.id})? Any stored persistent data will be permanently destroyed (§4).`,
+        { modal: true },
+        'Delete',
+        'Delete (Force)',
+        'Cancel'
+      );
+
+      if (confirm !== 'Delete' && confirm !== 'Delete (Force)') {
+        return;
+      }
+
+      const force = confirm === 'Delete (Force)';
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Deleting volume ${vol.name}...`
+        },
+        async () => {
+          try {
+            await bridge.removeVolume(vol.id, force);
+            volumesProvider?.refresh();
+            vscode.window.showInformationMessage(`Volume "${vol.name}" deleted successfully.`);
+          } catch (e: any) {
+            vscode.window.showErrorMessage(`Failed to delete volume: ${e.message}`);
+          }
+        }
+      );
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.inspectVolume', async (item?: any) => {
+      const vol = await resolveVolume(item, bridge);
+      if (!vol) {
+        return;
+      }
+
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Inspecting volume ${vol.id}...`
+        },
+        async () => {
+          try {
+            const inspected = await bridge.inspectVolume(vol.id);
+            const doc = await vscode.workspace.openTextDocument({
+              content: JSON.stringify(inspected, null, 2),
+              language: 'json'
+            });
+            await vscode.window.showTextDocument(doc, { preview: true });
+          } catch (e: any) {
+            vscode.window.showErrorMessage(`Failed to inspect volume: ${e.message}`);
+          }
+        }
+      );
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.copyVolumeId', async (item?: any) => {
+      const vol = await resolveVolume(item, bridge);
+      if (vol) {
+        await vscode.env.clipboard.writeText(vol.id);
+        vscode.window.showInformationMessage(`Volume ID "${vol.id}" copied to clipboard.`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.copyVolumeName', async (item?: any) => {
+      const vol = await resolveVolume(item, bridge);
+      if (vol) {
+        await vscode.env.clipboard.writeText(vol.name);
+        vscode.window.showInformationMessage(`Volume name "${vol.name}" copied to clipboard.`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.addVolumeToBox', async (item?: any) => {
+      const vol = await resolveVolume(item, bridge);
+      if (!vol) {
+        return;
+      }
+
+      const guestPath = await vscode.window.showInputBox({
+        prompt: `Enter guest mount path inside container for volume "${vol.name}"`,
+        value: '/data',
+        placeHolder: 'e.g. /data, /mnt/storage, /app/data',
+        validateInput: (v) => {
+          const check = validateGuestPath(v);
+          if (!check.valid) {
+            return check.error;
+          }
+          return null;
+        }
+      });
+
+      if (!guestPath) {
+        return;
+      }
+
+      const pathCheck = validateGuestPath(guestPath);
+      if (pathCheck.warning) {
+        vscode.window.showWarningMessage(pathCheck.warning);
+      }
+
+      const projectInfo = await ProjectManager.findProjectConfig();
+      if (projectInfo) {
+        await ProjectManager.addVolumeMount(projectInfo.fileUri, {
+          managed_volume: vol.name || vol.id,
+          guest_path: guestPath.trim(),
+          read_only: false
+        });
+        vscode.window.showInformationMessage(
+          `Volume "${vol.name}" configured for mount at "${guestPath.trim()}" in boxlite.json. Run "Deploy to Box" to deploy.`
+        );
+      } else {
+        vscode.window.showInformationMessage(
+          `Volume mount configured: "${vol.name}" -> "${guestPath.trim()}". To persist, add to "volumes" in boxlite.json.`
+        );
+      }
+    })
+  );
 }
 
 async function resolveBoxId(item?: any, bridge?: BoxLiteBridgeClient): Promise<string | undefined> {
@@ -544,6 +831,55 @@ async function resolveBoxUrl(item?: BoxTreeItem, bridge?: BoxLiteBridgeClient): 
     }
   } catch {
     // Ignore
+  }
+  return undefined;
+}
+
+async function resolveVolume(
+  item?: any,
+  bridge?: BoxLiteBridgeClient
+): Promise<{ id: string; name: string } | undefined> {
+  if (item instanceof VolumeTreeItem) {
+    return { id: item.volume.id, name: item.volume.name || item.volume.id };
+  }
+  if (item && item.volume) {
+    return { id: item.volume.id, name: item.volume.name || item.volume.id };
+  }
+  if (item && item.volumeId) {
+    return { id: item.volumeId, name: item.label || item.volumeId };
+  }
+  if (typeof item === 'string' && item.trim().length > 0) {
+    return { id: item.trim(), name: item.trim() };
+  }
+  if (!bridge) {
+    return undefined;
+  }
+  try {
+    const volumes = await bridge.listVolumes();
+    if (volumes.length === 0) {
+      const create = await vscode.window.showInformationMessage(
+        'No managed persistent volumes found. Would you like to create one?',
+        'Create Volume'
+      );
+      if (create === 'Create Volume') {
+        await vscode.commands.executeCommand('boxlite.createVolume');
+      }
+      return undefined;
+    }
+    const picked = await vscode.window.showQuickPick(
+      volumes.map((v) => ({
+        label: v.name || v.id,
+        description: `${v.state || 'ready'} · ${v.id}`,
+        id: v.id,
+        name: v.name || v.id
+      })),
+      { placeHolder: 'Select a Managed Volume' }
+    );
+    if (picked) {
+      return { id: picked.id, name: picked.name };
+    }
+  } catch (e: any) {
+    vscode.window.showErrorMessage(`Failed to list volumes: ${e.message}`);
   }
   return undefined;
 }

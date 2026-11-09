@@ -1,6 +1,8 @@
 const Module = require('module');
 const originalRequire = Module.prototype.require;
 
+const commandRegistry = new Map();
+
 const mockVscode = {
   workspace: {
     workspaceFolders: [],
@@ -20,11 +22,27 @@ const mockVscode = {
       dispose: () => {}
     }),
     showInputBox: async () => undefined,
-    showQuickPick: async () => undefined
+    showQuickPick: async () => undefined,
+    withProgress: async (_options, task) => {
+      return await task({ report: () => {} });
+    }
+  },
+  ProgressLocation: {
+    Notification: 15,
+    Window: 10,
+    SourceControl: 1
   },
   commands: {
-    registerCommand: () => ({ dispose: () => {} }),
-    executeCommand: async () => {}
+    registerCommand: (id, callback) => {
+      commandRegistry.set(id, callback);
+      return { dispose: () => commandRegistry.delete(id) };
+    },
+    executeCommand: async (id, ...args) => {
+      const handler = commandRegistry.get(id);
+      if (handler) {
+        return await handler(...args);
+      }
+    }
   },
   Uri: {
     file: (p) => ({ fsPath: p, scheme: 'file' }),

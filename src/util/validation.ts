@@ -89,3 +89,53 @@ export function validateNetworkPolicy(
 
   return result;
 }
+
+export function validateVolumeName(name: string): { valid: boolean; error?: string } {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return { valid: false, error: 'Volume name cannot be empty.' };
+  }
+  if (trimmed.length > 63) {
+    return { valid: false, error: 'Volume name cannot exceed 63 characters.' };
+  }
+  const nameRegex = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+  if (!nameRegex.test(trimmed)) {
+    return {
+      valid: false,
+      error: 'Volume name must start with an alphanumeric character and contain only letters, numbers, hyphens, dots, or underscores.'
+    };
+  }
+  return { valid: true };
+}
+
+export function validateGuestPath(guestPath: string): { valid: boolean; error?: string; warning?: string } {
+  const trimmed = guestPath.trim();
+  if (!trimmed) {
+    return { valid: false, error: 'Guest mount path cannot be empty.' };
+  }
+  if (!trimmed.startsWith('/')) {
+    return { valid: false, error: 'Guest mount path must be an absolute path starting with "/".' };
+  }
+  if (trimmed.includes('..')) {
+    return { valid: false, error: 'Guest mount path must not contain relative ".." segments.' };
+  }
+  if (trimmed === '/') {
+    return { valid: false, error: 'Cannot mount volume onto root directory "/".' };
+  }
+
+  if (trimmed === '/tmp' || trimmed === '/dev/shm') {
+    return {
+      valid: true,
+      warning: `Mounting on "${trimmed}" hides rootfs content (§4). File copy operations under mounted volumes require an exec-based archive workflow.`
+    };
+  }
+
+  const systemPaths = ['/proc', '/sys', '/dev'];
+  for (const sys of systemPaths) {
+    if (trimmed === sys || trimmed.startsWith(sys + '/')) {
+      return { valid: false, error: `Cannot mount volume onto system path "${trimmed}".` };
+    }
+  }
+
+  return { valid: true };
+}
