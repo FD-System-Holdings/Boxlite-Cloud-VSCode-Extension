@@ -105,7 +105,8 @@ The extension utilizes a managed Python sidecar (`src/bridge/python/bridge.py`) 
 | `boxlite.deploy` | Deploy to Box | Deploy current workspace to a Box instance |
 | `boxlite.newProject` | Create New BoxLite Project... | Generate starter template |
 | `boxlite.setApiKey` | Sign In / Set API Key | Configure BOXLITE_API_KEY |
-| `boxlite.signOut` | Sign Out | Remove stored API key |
+| `boxlite.signOut` | Log Out | Remove stored API key |
+| `boxlite.createBox` | Add New Box... | Create a new Box instance |
 | `boxlite.refresh` | Refresh | Refresh boxes explorer tree |
 | `boxlite.startBox` | Start Box | Start a stopped Box |
 | `boxlite.stopBox` | Stop Box | Stop a running Box |

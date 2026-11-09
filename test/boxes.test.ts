@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { BoxTreeItem } from '../src/tree/nodes';
+import { BoxTreeItem, AccountTreeItem } from '../src/tree/nodes';
 import { BoxesTreeDataProvider } from '../src/tree/boxesProvider';
 
 describe('Box Tree Items and Lifecycle Management', () => {
@@ -25,6 +25,34 @@ describe('Box Tree Items and Lifecycle Management', () => {
     assert.strictEqual(item.contextValue?.includes('isStopped'), true);
     assert.strictEqual(item.contextValue?.includes('canStop'), false);
     assert.strictEqual(item.contextValue?.includes('isRunning'), false);
+  });
+
+  it('should treat CONFIGURED status as stopped and provide canStart context value', () => {
+    const item = new BoxTreeItem({
+      id: 'box-12345678',
+      name: 'configured-app',
+      status: 'configured' as any
+    });
+    assert.strictEqual(item.contextValue?.includes('canStart'), true);
+    assert.strictEqual(item.contextValue?.includes('isStopped'), true);
+    assert.strictEqual(item.contextValue?.includes('canStop'), false);
+    assert.strictEqual(item.contextValue?.includes('isRunning'), false);
+  });
+
+  it('should not allow stopping an already STOPPING box and present transient child action', async () => {
+    const item = new BoxTreeItem({
+      id: 'box-12345678',
+      name: 'stopping-app',
+      status: 'stopping' as any
+    });
+    assert.strictEqual(item.contextValue?.includes('canStop'), false);
+    assert.strictEqual(item.contextValue?.includes('isRunning'), false);
+    assert.strictEqual(item.contextValue?.includes('canStart'), false);
+
+    const provider = new BoxesTreeDataProvider({} as any, {} as any);
+    const children = await provider.getChildren(item);
+    assert.strictEqual(children.some((c) => c.label === 'Stop Box'), false);
+    assert.strictEqual(children.some((c) => c.label === 'Stopping Box...'), true);
   });
 
   it('should expose Stop Box action child node for running boxes', async () => {
@@ -99,5 +127,26 @@ describe('Box Tree Items and Lifecycle Management', () => {
     assert.strictEqual(item.description, 'unknown · 01HJK4TN');
     assert.strictEqual(String(item.tooltip).includes('Status: unknown'), true);
     assert.strictEqual(item.contextValue?.includes('box-unknown'), true);
+  });
+
+  it('should configure AccountTreeItem with account-signed-in context when authenticated', () => {
+    const signedInItem = new AccountTreeItem('https://api.boxlite.ai', 'test-api-key');
+    assert.strictEqual(signedInItem.contextValue, 'account-signed-in');
+    assert.strictEqual(signedInItem.label, 'BoxLite Cloud Account');
+
+    const signedOutItem = new AccountTreeItem('https://api.boxlite.ai', undefined);
+    assert.strictEqual(signedOutItem.contextValue, 'account-signed-out');
+  });
+
+  it('should contribute context menu commands for account-signed-in in package.json', () => {
+    const pkg = require('../../package.json');
+    const contextMenus = pkg.contributes?.menus?.['view/item/context'] || [];
+    const accountMenus = contextMenus.filter(
+      (m: any) => m.when && m.when.includes("viewItem == 'account-signed-in'")
+    );
+
+    const commands = accountMenus.map((m: any) => m.command);
+    assert.ok(commands.includes('boxlite.createBox'), 'Expected createBox in account context menu');
+    assert.ok(commands.includes('boxlite.signOut'), 'Expected signOut in account context menu');
   });
 });

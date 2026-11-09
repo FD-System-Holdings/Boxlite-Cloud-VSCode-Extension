@@ -34,15 +34,15 @@ export function registerCommands(
   context.subscriptions.push(
     vscode.commands.registerCommand('boxlite.signOut', async () => {
       const confirm = await vscode.window.showWarningMessage(
-        'Are you sure you want to sign out of BoxLite Cloud?',
-        'Sign Out',
+        'Are you sure you want to log out of BoxLite Cloud?',
+        'Log Out',
         'Cancel'
       );
-      if (confirm === 'Sign Out') {
+      if (confirm === 'Log Out') {
         await credentials.clearApiKey();
         bridge.restartBridge();
         treeProvider.refresh();
-        vscode.window.showInformationMessage('Signed out of BoxLite Cloud.');
+        vscode.window.showInformationMessage('Logged out of BoxLite Cloud.');
       }
     })
   );

@@ -21,6 +21,7 @@ export class AccountTreeItem extends BoxLiteTreeItem {
       ? `Connected · ${restUrl.replace(/^https?:\/\//, '')}`
       : 'Click to Sign In';
     this.iconPath = new vscode.ThemeIcon(apiKey ? 'account' : 'sign-in');
+    // shortcut: account context menu targets signed-in accounts; add signed-out actions if offline configuration is needed
     this.contextValue = apiKey ? 'account-signed-in' : 'account-signed-out';
 
     if (!apiKey) {
@@ -43,9 +44,16 @@ export class BoxTreeItem extends BoxLiteTreeItem {
 
     const status = (box.status || '').toLowerCase().trim() || 'unknown';
     const isRunning = status === 'running' || status === 'ready' || status === 'active';
-    const isStopped = status === 'stopped' || status === 'terminated' || status === 'exited';
-    const canStop = !isStopped;
-    const canStart = !isRunning;
+    const isStopped =
+      status === 'stopped' ||
+      status === 'terminated' ||
+      status === 'exited' ||
+      status === 'configured' ||
+      status === 'paused' ||
+      status === 'inactive' ||
+      status === 'shutdown';
+    const canStop = isRunning;
+    const canStart = isStopped && !isRunning;
 
     this.description = `${status} · ${box.id.substring(0, 8)}`;
     this.tooltip = `Box ID: ${box.id}\nName: ${box.name}\nStatus: ${status}\nImage: ${box.image || 'python'}`;

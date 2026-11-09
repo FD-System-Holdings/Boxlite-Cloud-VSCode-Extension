@@ -321,7 +321,10 @@ class BoxLiteBridge:
                 b_image = getattr(b, "image", None) or "python"
                 b_tunnels = getattr(b, "tunnels", None)
 
-            b_status = str(getattr(raw_status, "value", raw_status)).lower() if raw_status else "unknown"
+            raw_str = str(getattr(raw_status, "value", getattr(raw_status, "name", raw_status))).lower() if raw_status else "unknown"
+            if "." in raw_str:
+                raw_str = raw_str.split(".")[-1]
+            b_status = raw_str.strip()
 
             box_info = {
                 "id": b_id,
@@ -447,6 +450,22 @@ class BoxLiteBridge:
         box_id = args["boxId"]
         box = self.get_or_attach_box(box_id)
         await box.start()
+
+        rt = self.ensure_runtime()
+        for _ in range(16):
+            try:
+                info = await rt.inspect(box_id) if hasattr(rt, "inspect") else None
+                st = ""
+                if isinstance(info, dict):
+                    st = str(info.get("status", "")).lower().strip()
+                elif hasattr(info, "status"):
+                    st = str(getattr(info, "status", "")).lower().strip()
+                if st in ("running", "ready", "active"):
+                    return {"boxId": box_id, "status": st}
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
+
         return {"boxId": box_id, "status": "running"}
 
     async def handle_stop_box(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -458,6 +477,22 @@ class BoxLiteBridge:
             rt = self.ensure_runtime()
             if hasattr(rt, "stop"):
                 await rt.stop(box_id)
+
+        rt = self.ensure_runtime()
+        for _ in range(16):
+            try:
+                info = await rt.inspect(box_id) if hasattr(rt, "inspect") else None
+                st = ""
+                if isinstance(info, dict):
+                    st = str(info.get("status", "")).lower().strip()
+                elif hasattr(info, "status"):
+                    st = str(getattr(info, "status", "")).lower().strip()
+                if st in ("stopped", "terminated", "exited", "configured", "paused", "inactive", "shutdown"):
+                    return {"boxId": box_id, "status": st}
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
+
         return {"boxId": box_id, "status": "stopped"}
 
     async def handle_remove_box(self, args: Dict[str, Any]) -> Dict[str, Any]:

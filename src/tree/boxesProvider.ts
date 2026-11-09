@@ -41,6 +41,15 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
         const boxes = await this.bridge.listBoxes();
         this.cachedBoxes = boxes.map((b) => new BoxTreeItem(b));
         items.push(...this.cachedBoxes);
+
+        // Auto-refresh if any box is transitioning (e.g. stopping or starting)
+        const hasTransient = boxes.some((b) => {
+          const s = (b.status || '').toLowerCase().trim();
+          return s === 'stopping' || s === 'starting' || s === 'provisioning';
+        });
+        if (hasTransient) {
+          setTimeout(() => this.refresh(), 1500);
+        }
       } catch (err: any) {
         items.push(
           new BoxChildTreeItem(
@@ -59,10 +68,18 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
       // Children of a Box: Power Action, Tunnels, Network, Logs, Info
       const children: BoxLiteTreeItem[] = [];
       const status = (element.box.status || '').toLowerCase().trim();
-      const isStopped = status === 'stopped' || status === 'terminated' || status === 'exited';
-
       // 1. Power Action (Stop / Start Box)
-      if (!isStopped) {
+      const isRunning = status === 'running' || status === 'ready' || status === 'active';
+      const isStopped =
+        status === 'stopped' ||
+        status === 'terminated' ||
+        status === 'exited' ||
+        status === 'configured' ||
+        status === 'paused' ||
+        status === 'inactive' ||
+        status === 'shutdown';
+
+      if (isRunning) {
         children.push(
           new BoxChildTreeItem(
             'Stop Box',
@@ -78,7 +95,7 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
             element.box.id
           )
         );
-      } else {
+      } else if (isStopped) {
         children.push(
           new BoxChildTreeItem(
             'Start Box',
@@ -91,6 +108,18 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
             },
             vscode.TreeItemCollapsibleState.None,
             'box-start-action',
+            element.box.id
+          )
+        );
+      } else {
+        children.push(
+          new BoxChildTreeItem(
+            status === 'stopping' ? 'Stopping Box...' : 'Starting Box...',
+            `Box is ${status}`,
+            'sync~spin',
+            undefined,
+            vscode.TreeItemCollapsibleState.None,
+            'box-transient-action',
             element.box.id
           )
         );

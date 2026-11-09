@@ -50,7 +50,7 @@
       },
       {
         "command": "boxlite.signOut",
-        "title": "Sign Out",
+        "title": "Log Out",
         "category": "BoxLite",
         "icon": "$(sign-out)"
       },
@@ -86,7 +86,7 @@
       },
       {
         "command": "boxlite.createBox",
-        "title": "Create Box...",
+        "title": "Add New Box...",
         "category": "BoxLite",
         "icon": "$(add)"
       },
@@ -194,6 +194,16 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "boxlite.createBox",
+          "when": "view == boxlite.boxesView && viewItem == 'account-signed-in'",
+          "group": "account@1"
+        },
+        {
+          "command": "boxlite.signOut",
+          "when": "view == boxlite.boxesView && viewItem == 'account-signed-in'",
+          "group": "account@2"
+        },
         {
           "command": "boxlite.openUrl",
           "when": "view == boxlite.boxesView && viewItem =~ /.*canOpenUrl.*/",
