@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import {
   getDefaultBoxConfiguration,
+  getQuickCreateBoxConfiguration,
   convertBoxConfigToCreateArgs,
   resolveEntrypoint,
   showBoxConfigurationWizard,
@@ -33,6 +34,30 @@ describe('Box Creation Configuration Options & Templates', () => {
     assert.strictEqual(config.defaultPort, 8080);
     assert.strictEqual(typeof config.name, 'string');
     assert.ok(config.name.startsWith('box-'));
+  });
+
+  it('should generate quick create box configuration with 1 vCPU, 1 GiB RAM, 10 GiB SSD, wake on access off, 5m idle stop, and disabled networking (agent.md §3)', () => {
+    const config = getQuickCreateBoxConfiguration('test-quick-box');
+    assert.strictEqual(config.name, 'test-quick-box');
+    assert.strictEqual(config.sizingPreset, 'small');
+    assert.strictEqual(config.cpus, 1);
+    assert.strictEqual(config.memoryMib, 1024);
+    assert.strictEqual(config.diskSizeGb, 10);
+    assert.strictEqual(config.inboundMode, 'disabled');
+    assert.strictEqual(config.outboundMode, 'disabled');
+    assert.deepStrictEqual(config.allowNet, []);
+    assert.strictEqual(config.autoResume, false);
+    assert.strictEqual(config.autoStop, 300);
+
+    const args = convertBoxConfigToCreateArgs(config);
+    assert.strictEqual(args.cpus, 1);
+    assert.strictEqual(args.memoryMib, 1024);
+    assert.strictEqual(args.diskSizeGb, 10);
+    assert.strictEqual(args.network?.inbound?.mode, 'disabled');
+    assert.strictEqual(args.network?.outbound?.mode, 'disabled');
+    assert.deepStrictEqual(args.network?.outbound?.allow_net, []);
+    assert.strictEqual(args.autoResume, false);
+    assert.strictEqual(args.autoStop, 300);
   });
 
   it('should define valid compute sizing presets', () => {

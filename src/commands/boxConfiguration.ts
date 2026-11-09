@@ -241,6 +241,22 @@ export function getDefaultBoxConfiguration(): BoxConfiguration {
   };
 }
 
+export function getQuickCreateBoxConfiguration(name?: string): BoxConfiguration {
+  return {
+    ...getDefaultBoxConfiguration(),
+    name: name?.trim() || generateBoxName(),
+    sizingPreset: 'small',
+    cpus: 1,
+    memoryMib: 1024,
+    diskSizeGb: 10,
+    inboundMode: 'disabled',
+    outboundMode: 'disabled',
+    allowNet: [],
+    autoResume: false,
+    autoStop: 300
+  };
+}
+
 export function resolveEntrypoint(config: BoxConfiguration): string[] | undefined {
   switch (config.entrypointPreset) {
     case 'supervisor':

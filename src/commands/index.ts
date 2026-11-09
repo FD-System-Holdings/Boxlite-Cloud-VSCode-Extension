@@ -17,6 +17,7 @@ import {
   BOX_TEMPLATES,
   convertBoxConfigToCreateArgs,
   getDefaultBoxConfiguration,
+  getQuickCreateBoxConfiguration,
   generateBoxName
 } from './boxConfiguration';
 
@@ -147,9 +148,9 @@ export function registerCommands(
           action: 'template'
         },
         {
-          label: '$(zap) Quick Create (Standard Python Box)',
-          description: 'python image · 2 vCPU · 4 GB RAM · Supervisor entrypoint · Port 8080',
-          detail: 'Fast one-click creation using canonical defaults (§1)',
+          label: '$(zap) Quick Create (Small Python Box)',
+          description: 'python image · 1 vCPU · 1 GiB RAM · 10 GiB Disk · Network disabled · Stop on idle: 5m',
+          detail: 'Fast one-click creation using small box sizing with inbound and outbound network disabled (agent.md §3)',
           action: 'quick'
         }
       ];
@@ -222,10 +223,7 @@ export function registerCommands(
           return;
         }
 
-        const config = {
-          ...getDefaultBoxConfiguration(),
-          name: name.trim()
-        };
+        const config = getQuickCreateBoxConfiguration(name);
         const args = convertBoxConfigToCreateArgs(config);
         await performCreateBox(args);
       }

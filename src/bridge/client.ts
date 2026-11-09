@@ -29,7 +29,7 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
     }
   >();
   private requestCounter = 0;
-  private isStarting = false;
+  private startPromise: Promise<ChildProcess> | null = null;
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -57,70 +57,74 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
       return this.process;
     }
 
-    if (this.isStarting) {
-      // Wait for process to spawn
-      await new Promise((r) => setTimeout(r, 200));
-      return this.ensureProcess();
+    if (this.startPromise) {
+      return this.startPromise;
     }
 
-    this.isStarting = true;
-    try {
-      const apiKey = await this.credentials.getApiKey();
-      const restUrl = this.credentials.getRestUrl();
-      const pythonPath = await this.envManager.getPythonPath();
-      const scriptPath = await this.getBridgeScriptPath();
+    this.startPromise = this.spawnBridgeProcess().finally(() => {
+      this.startPromise = null;
+    });
 
-      const env: NodeJS.ProcessEnv = {
-        ...process.env,
-        BOXLITE_API_KEY: apiKey || '',
-        BOXLITE_REST_URL: restUrl,
-        PYTHONUNBUFFERED: '1',
-        PYTHONUTF8: '1'
-      };
+    return this.startPromise;
+  }
 
-      const { bin, args: parsedArgs } = parseExecutableCommand(pythonPath);
-      const args = parsedArgs.concat([scriptPath]);
+  private async spawnBridgeProcess(): Promise<ChildProcess> {
+    const apiKey = await this.credentials.getApiKey();
+    const restUrl = this.credentials.getRestUrl();
+    const pythonPath = await this.envManager.getPythonPath();
+    const scriptPath = await this.getBridgeScriptPath();
 
-      this.outputChannel.appendLine(`[bridge] Starting python bridge: ${bin} ${args.join(' ')}`);
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      BOXLITE_API_KEY: apiKey || '',
+      BOXLITE_REST_URL: restUrl,
+      PYTHONUNBUFFERED: '1',
+      PYTHONUTF8: '1'
+    };
+    delete env.NODE_OPTIONS;
+    delete env.VSCODE_INSPECTOR_OPTIONS;
+    delete env.ELECTRON_RUN_AS_NODE;
 
-      const proc = spawn(bin, args, {
-        env,
-        stdio: ['pipe', 'pipe', 'pipe']
+    const { bin, args: parsedArgs } = parseExecutableCommand(pythonPath);
+    const args = parsedArgs.concat([scriptPath]);
+
+    this.outputChannel.appendLine(`[bridge] Starting python bridge: ${bin} ${args.join(' ')}`);
+
+    const proc = spawn(bin, args, {
+      env,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    proc.on('error', (err) => {
+      this.outputChannel.appendLine(`[bridge] Process error: ${err.message}`);
+      this.rejectAllPending(err);
+      this.process = null;
+    });
+
+    proc.on('exit', (code, signal) => {
+      this.outputChannel.appendLine(
+        `[bridge] Process exited with code ${code}, signal ${signal}`
+      );
+      this.rejectAllPending(new Error(`Bridge process exited with code ${code}`));
+      this.process = null;
+    });
+
+    if (proc.stderr) {
+      const stderrRl = readline.createInterface({ input: proc.stderr });
+      stderrRl.on('line', (line) => {
+        this.outputChannel.appendLine(`[bridge:py] ${line}`);
       });
-
-      proc.on('error', (err) => {
-        this.outputChannel.appendLine(`[bridge] Process error: ${err.message}`);
-        this.rejectAllPending(err);
-        this.process = null;
-      });
-
-      proc.on('exit', (code, signal) => {
-        this.outputChannel.appendLine(
-          `[bridge] Process exited with code ${code}, signal ${signal}`
-        );
-        this.rejectAllPending(new Error(`Bridge process exited with code ${code}`));
-        this.process = null;
-      });
-
-      if (proc.stderr) {
-        const stderrRl = readline.createInterface({ input: proc.stderr });
-        stderrRl.on('line', (line) => {
-          this.outputChannel.appendLine(`[bridge:py] ${line}`);
-        });
-      }
-
-      if (proc.stdout) {
-        const stdoutRl = readline.createInterface({ input: proc.stdout });
-        stdoutRl.on('line', (line) => {
-          this.handleStdoutLine(line);
-        });
-      }
-
-      this.process = proc;
-      return proc;
-    } finally {
-      this.isStarting = false;
     }
+
+    if (proc.stdout) {
+      const stdoutRl = readline.createInterface({ input: proc.stdout });
+      stdoutRl.on('line', (line) => {
+        this.handleStdoutLine(line);
+      });
+    }
+
+    this.process = proc;
+    return proc;
   }
 
   private handleStdoutLine(line: string) {

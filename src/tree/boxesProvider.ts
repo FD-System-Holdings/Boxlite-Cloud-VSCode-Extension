@@ -39,16 +39,28 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
 
       try {
         const boxes = await this.bridge.listBoxes();
-        this.cachedBoxes = boxes.map((b) => new BoxTreeItem(b));
-        items.push(...this.cachedBoxes);
+        if (boxes.length === 0) {
+          this.cachedBoxes = [];
+          items.push(
+            new BoxChildTreeItem(
+              'No Managed Boxes',
+              'Click to create a microvm box',
+              'add',
+              { command: 'boxlite.createBox', title: 'Add New Box...' }
+            )
+          );
+        } else {
+          this.cachedBoxes = boxes.map((b) => new BoxTreeItem(b));
+          items.push(...this.cachedBoxes);
 
-        // Auto-refresh if any box is transitioning (e.g. stopping or starting)
-        const hasTransient = boxes.some((b) => {
-          const s = (b.status || '').toLowerCase().trim();
-          return s === 'stopping' || s === 'starting' || s === 'provisioning';
-        });
-        if (hasTransient) {
-          setTimeout(() => this.refresh(), 1500);
+          // Auto-refresh if any box is transitioning (e.g. stopping or starting)
+          const hasTransient = boxes.some((b) => {
+            const s = (b.status || '').toLowerCase().trim();
+            return s === 'stopping' || s === 'starting' || s === 'provisioning';
+          });
+          if (hasTransient) {
+            setTimeout(() => this.refresh(), 1500);
+          }
         }
       } catch (err: any) {
         items.push(

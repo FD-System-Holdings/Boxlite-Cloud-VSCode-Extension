@@ -191,4 +191,23 @@ describe('Box Tree Items and Lifecycle Management', () => {
     await vscode.commands.executeCommand('boxlite.stopBox', boxItem);
     assert.deepStrictEqual(executionOrder, ['logManager.stopStreaming', 'bridge.stopBox']);
   });
+
+  it('should show friendly empty state when no boxes exist', async () => {
+    const mockBridge: any = {
+      listBoxes: async () => []
+    };
+    const mockCredentials: any = {
+      getApiKey: async () => 'test-key',
+      getRestUrl: () => 'https://api.boxlite.ai'
+    };
+
+    const provider = new BoxesTreeDataProvider(mockBridge, mockCredentials);
+    const rootItems = await provider.getChildren();
+
+    assert.strictEqual(rootItems.length, 2); // AccountTreeItem + Empty State Item
+    const emptyItem = rootItems[1];
+    assert.strictEqual(emptyItem.label, 'No Managed Boxes');
+    assert.strictEqual(emptyItem.description, 'Click to create a microvm box');
+    assert.strictEqual(emptyItem.command?.command, 'boxlite.createBox');
+  });
 });

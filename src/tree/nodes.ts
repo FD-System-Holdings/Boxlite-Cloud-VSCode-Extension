@@ -134,10 +134,12 @@ export class VolumeChildTreeItem extends BoxLiteTreeItem {
     command?: vscode.Command,
     collapsible: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
     contextValue?: string,
-    public readonly volumeId?: string
+    public readonly volumeId?: string,
+    tooltip?: string
   ) {
     super(label, collapsible);
     this.description = description;
+    this.tooltip = tooltip || description;
     if (icon) {
       this.iconPath = new vscode.ThemeIcon(icon);
     }

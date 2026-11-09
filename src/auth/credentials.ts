@@ -11,9 +11,13 @@ export class CredentialsManager {
 
   public async getApiKey(): Promise<string | undefined> {
     // Priority: SecretStorage > Environment Variable
-    const stored = await this.secretStorage.get(SECRET_KEY_API_KEY);
-    if (stored && stored.trim().length > 0) {
-      return stored.trim();
+    try {
+      const stored = await this.secretStorage.get(SECRET_KEY_API_KEY);
+      if (stored && stored.trim().length > 0) {
+        return stored.trim();
+      }
+    } catch {
+      // SecretStorage may fail during early window startup
     }
     const envKey = process.env.BOXLITE_API_KEY;
     if (envKey && envKey.trim().length > 0) {

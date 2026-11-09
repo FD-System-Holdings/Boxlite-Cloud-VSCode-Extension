@@ -128,6 +128,30 @@ describe('Volume Tree Items and Lifecycle Management', () => {
     assert.strictEqual(errorItem.label, 'Error loading volumes');
     assert.strictEqual(errorItem.command?.command, 'boxlite.refreshVolumes');
   });
+
+  it('should present 403 forbidden resource with agent.md diagnosis guidance', async () => {
+    const mockBridge: any = {
+      listVolumes: async () => {
+        throw new Error('BoxLite Cloud API error (403): Forbidden resource\nDiagnosis: 403 Forbidden: Check authentication/token and requested URL; do not assume either app health or one particular policy cause (agent.md §5). Note: do not infer managed database or shared-volume support (agent.md §4).');
+      }
+    };
+    const mockCredentials: any = {
+      getApiKey: async () => 'test-key',
+      getRestUrl: () => 'https://api.boxlite.ai'
+    };
+
+    const provider = new VolumesTreeDataProvider(mockBridge, mockCredentials);
+    const rootItems = await provider.getChildren();
+
+    assert.strictEqual(rootItems.length, 2);
+    const errorItem = rootItems[1];
+    assert.strictEqual(errorItem.label, 'Error loading volumes');
+    assert.ok(String(errorItem.description).includes('403 Forbidden'));
+    assert.ok(String(errorItem.description).includes('agent.md §4'));
+    assert.strictEqual(errorItem.contextValue, 'volume-forbidden');
+    assert.ok(String(errorItem.tooltip).includes('agent.md §5'));
+    assert.ok(String(errorItem.tooltip).includes('agent.md §4'));
+  });
 });
 
 describe('Box Tree Display of Mounted Volumes', () => {

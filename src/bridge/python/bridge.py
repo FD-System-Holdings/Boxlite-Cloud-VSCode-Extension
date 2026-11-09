@@ -428,13 +428,10 @@ class BoxLiteBridge:
                 kwargs["auto_resume"] = auto_resume
             if cpus is not None:
                 kwargs["cpus"] = cpus
-                kwargs["cpu"] = cpus
             if memory_mib is not None:
                 kwargs["memory_mib"] = memory_mib
-                kwargs["memory"] = round(memory_mib / 1024, 2)
             if disk_size_gb is not None:
                 kwargs["disk_size_gb"] = disk_size_gb
-                kwargs["disk"] = disk_size_gb
             if env:
                 kwargs["env"] = env
             if cmd:
@@ -939,13 +936,17 @@ class BoxLiteBridge:
             # Formulate structured diagnostic guidance according to §5
             diagnosis = None
             if "502" in message or "unreachable" in message.lower():
-                diagnosis = "502 Bad Gateway / Box unreachable: Check app listener on 0.0.0.0, /tmp/server.log, network inbound mode, and tunnel declaration."
-            elif "403" in message or "401" in message or "login" in message.lower() or "credentials" in message.lower() or "unauthorized" in message.lower():
-                diagnosis = "401/403 Unauthorized: Invalid credentials. Ensure your BOXLITE_API_KEY is configured via 'BoxLite: Sign In / Set API Key'."
-            elif "409" in message:
-                diagnosis = "409 Conflict: Process already ran or name conflict. Check supervisor entrypoint and box lifecycle."
+                diagnosis = "502 Bad Gateway / Box unreachable: Check app listener on 0.0.0.0, /tmp/server.log, network inbound mode, and tunnel declaration (agent.md §5)."
+            elif "401" in message or "unauthorized" in message.lower() or ("invalid credentials" in message.lower() and "403" not in message):
+                diagnosis = "401 Unauthorized: Invalid credentials or missing token. Check credentials and BOXLITE_API_KEY via 'BoxLite: Sign In / Set API Key' (agent.md §5)."
+            elif "403" in message or "forbidden" in message.lower():
+                diagnosis = "403 Forbidden: Check authentication/token and requested URL; do not assume either app health or one particular policy cause (agent.md §5). Note: do not infer managed database or shared-volume support (agent.md §4)."
+            elif "409" in message or "already ran" in message.lower() or "conflict" in message.lower():
+                diagnosis = "409 Conflict: Process already ran or name conflict. Check supervisor entrypoint and box lifecycle (agent.md §5)."
+            elif "400" in message or "bad request" in message.lower():
+                diagnosis = "400 Bad Request: Check schema validation and parameters; ensure deprecated or unsupported fields (such as auto_remove) are omitted (agent.md §5)."
             elif "NetworkError" in error_class or "network" in message.lower():
-                diagnosis = "BoxLite NetworkError: Connection failure talking to BoxLite Cloud. Check API key and BOXLITE_REST_URL."
+                diagnosis = "BoxLite NetworkError: Connection failure talking to BoxLite Cloud. Check API key and BOXLITE_REST_URL (agent.md §5)."
             elif "BOXLITE_API_KEY" in message:
                 diagnosis = "Missing API key: Configure your BoxLite Cloud API key with 'BoxLite: Sign In / Set API Key'."
 

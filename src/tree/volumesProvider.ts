@@ -65,12 +65,37 @@ export class VolumesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteT
           }
         }
       } catch (err: any) {
+        const rawMsg = err.message || '';
+        const is403 = rawMsg.includes('403') || rawMsg.toLowerCase().includes('forbidden');
+        const is401 = rawMsg.includes('401') || rawMsg.toLowerCase().includes('unauthorized');
+
+        let desc = rawMsg;
+        let tooltip = rawMsg;
+        let command = { command: 'boxlite.refreshVolumes', title: 'Retry' };
+
+        if (is403) {
+          desc = '403 Forbidden · Managed volumes not permitted (agent.md §4)';
+          tooltip = `BoxLite Cloud API Error (403): Forbidden resource.\n\nDiagnosis (agent.md §5):\nCheck authentication/token and requested URL; do not assume either app health or one particular policy cause.\n\nNote (agent.md §4):\nDo not infer managed database or shared-volume support. BoxLite Cloud may restrict or not support shared volumes for your account tier. Click to retry.`;
+        } else if (is401) {
+          desc = '401 Unauthorized · Invalid credentials';
+          tooltip = `BoxLite Cloud API Error (401): Unauthorized.\n\nDiagnosis (agent.md §5):\nCheck credentials. Configure your BOXLITE_API_KEY via "BoxLite: Sign In / Set API Key".`;
+          command = { command: 'boxlite.setApiKey', title: 'Sign In / Set API Key' };
+        } else {
+          const firstLine = rawMsg.split('\n')[0];
+          desc = firstLine.length > 60 ? firstLine.slice(0, 57) + '...' : firstLine;
+          tooltip = rawMsg;
+        }
+
         items.push(
           new VolumeChildTreeItem(
             'Error loading volumes',
-            err.message,
-            'warning',
-            { command: 'boxlite.refreshVolumes', title: 'Retry' }
+            desc,
+            is403 ? 'lock' : (is401 ? 'key' : 'warning'),
+            command,
+            vscode.TreeItemCollapsibleState.None,
+            is403 ? 'volume-forbidden' : 'volume-error',
+            undefined,
+            tooltip
           )
         );
       }

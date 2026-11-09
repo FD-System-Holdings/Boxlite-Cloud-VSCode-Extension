@@ -69,13 +69,14 @@ export async function activate(context: vscode.ExtensionContext) {
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
 
-  // Check if API key is present; if not, prompt or show info
-  const apiKey = await credentials.getApiKey();
-  if (!apiKey) {
-    outputChannel.appendLine('[boxlite] No BOXLITE_API_KEY found. Prompting sign in on first use.');
-  } else {
-    outputChannel.appendLine(`[boxlite] Authenticated with API key: ${CredentialsManager.redactKey(apiKey)}`);
-  }
+  // Check if API key is present; if not, prompt or show info asynchronously to prevent blocking activation
+  credentials.getApiKey().then((apiKey) => {
+    if (!apiKey) {
+      outputChannel.appendLine('[boxlite] No BOXLITE_API_KEY found. Prompting sign in on first use.');
+    } else {
+      outputChannel.appendLine(`[boxlite] Authenticated with API key: ${CredentialsManager.redactKey(apiKey)}`);
+    }
+  }).catch(() => {});
 
   outputChannel.appendLine('[boxlite] BoxLite extension activated successfully.');
 }

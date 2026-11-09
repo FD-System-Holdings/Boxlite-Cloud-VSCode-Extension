@@ -8,10 +8,17 @@ describe('Error Diagnostics (§5 Table Mapping)', () => {
     assert.strictEqual(diag.checklist.some((item) => item.includes('0.0.0.0')), true);
   });
 
+  it('should diagnose 401 unauthorized / invalid credentials errors', () => {
+    const diag = diagnoseError('HTTP 401: Invalid credentials');
+    assert.strictEqual(diag.summary.includes('401'), true);
+    assert.strictEqual(diag.checklist.some((item) => item.includes('BOXLITE_API_KEY')), true);
+  });
+
   it('should diagnose 403 forbidden / login errors', () => {
-    const diag = diagnoseError('HTTP 403 Forbidden - access token missing');
+    const diag = diagnoseError('BoxLite Cloud API Error (403): Forbidden resource');
     assert.strictEqual(diag.summary.includes('403'), true);
-    assert.strictEqual(diag.checklist.some((item) => item.includes('X-BoxLite-Access-Token')), true);
+    assert.strictEqual(diag.checklist.some((item) => item.includes('agent.md §5')), true);
+    assert.strictEqual(diag.checklist.some((item) => item.includes('shared-volume support')), true);
   });
 
   it('should diagnose 409 conflict errors', () => {

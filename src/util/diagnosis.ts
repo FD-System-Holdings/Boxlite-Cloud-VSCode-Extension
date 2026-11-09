@@ -19,12 +19,25 @@ export function diagnoseError(errorMessage: string, code?: string): DiagnosticMe
     };
   }
 
+  if (lower.includes('401') || lower.includes('unauthorized') || (lower.includes('invalid credentials') && !lower.includes('403'))) {
+    return {
+      summary: '401 Unauthorized / Invalid Credentials',
+      checklist: [
+        'Verify that your BOXLITE_API_KEY is configured via "BoxLite: Sign In / Set API Key"',
+        'Ensure your API key is valid and active on your Cloud environment',
+        'Check installed SDK version and API environment (agent.md §5)'
+      ]
+    };
+  }
+
   if (lower.includes('403') || lower.includes('html login') || lower.includes('forbidden')) {
     return {
       summary: '403 Forbidden / Access Denied',
       checklist: [
+        'Check authentication/token and requested URL; do not assume either app health or one particular policy cause (agent.md §5)',
+        'Verify that your BOXLITE_API_KEY has permissions for this Cloud environment or requested resource',
         'If this is a private tunnel, provide the X-BoxLite-Access-Token header with your secret token',
-        'Verify that your BOXLITE_API_KEY is valid and has permissions for this Cloud environment',
+        'Do not infer managed database or shared-volume support if accessing volume resources (agent.md §4)',
         'Ensure the requested path is exposed by the running app'
       ]
     };

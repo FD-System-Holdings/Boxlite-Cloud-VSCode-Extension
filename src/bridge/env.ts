@@ -6,6 +6,7 @@ import { parseExecutableCommand } from '../util/process';
 
 export class PythonEnvManager {
   private outputChannel: vscode.OutputChannel;
+  private cachedPythonPath: string | null = null;
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -15,29 +16,37 @@ export class PythonEnvManager {
   }
 
   public async getPythonPath(): Promise<string> {
+    if (this.cachedPythonPath) {
+      return this.cachedPythonPath;
+    }
+
     const config = vscode.workspace.getConfiguration('boxlite');
     const configured = config.get<string>('pythonPath');
     if (configured && configured.trim().length > 0) {
-      return configured.trim();
+      this.cachedPythonPath = configured.trim();
+      return this.cachedPythonPath;
     }
 
     // Check virtual environment in globalStorageUri
     const venvPython = this.getGlobalStorageVenvPython();
     if (fs.existsSync(venvPython)) {
-      return venvPython;
+      this.cachedPythonPath = venvPython;
+      return this.cachedPythonPath;
     }
 
     // Fallback to system py or python3 or python
     const candidates = process.platform === 'win32'
-      ? ['python', 'py -3', 'py', 'python3']
+      ? ['py -3', 'python', 'py', 'python3']
       : ['python3', 'python'];
 
     for (const candidate of candidates) {
       if (await this.testExecutable(candidate)) {
+        this.cachedPythonPath = candidate;
         return candidate;
       }
     }
 
+    this.cachedPythonPath = 'python3';
     return 'python3';
   }
 
@@ -54,7 +63,11 @@ export class PythonEnvManager {
       try {
         const { bin, args } = parseExecutableCommand(execName);
         const fullArgs = args.concat(['-c', 'import sys; print(sys.version_info[0])']);
-        const proc = spawn(bin, fullArgs, { stdio: 'pipe' });
+        const env = { ...process.env };
+        delete env.NODE_OPTIONS;
+        delete env.VSCODE_INSPECTOR_OPTIONS;
+        delete env.ELECTRON_RUN_AS_NODE;
+        const proc = spawn(bin, fullArgs, { stdio: 'pipe', env });
         let out = '';
         proc.stdout.on('data', (d) => { out += d.toString(); });
         proc.on('close', (code) => {
