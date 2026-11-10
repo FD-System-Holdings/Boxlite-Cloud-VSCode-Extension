@@ -1,15 +1,13 @@
 {
   "name": "boxlite-cloud-vscode-extension",
-  "displayName": "BoxLite",
+  "displayName": "FD Systems: BoxLite Cloud",
   "description": "Deploy and manage BoxLite cloud applications with ease",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "publisher": "FD-System-Holdings",
   "engines": {
     "vscode": "^1.80.0"
   },
   "categories": [
-    "Cloud Computing",
-    "Deployment",
     "Other"
   ],
   "keywords": [
@@ -20,6 +18,10 @@
     "containers",
     "serverless"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FD-System-Holdings/Boxlite-Cloud-VSCode-Extension"
+  },
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
