@@ -1,8 +1,8 @@
 {
   "name": "boxlite-cloud-vscode-extension",
-  "displayName": "FD Systems: BoxLite Cloud",
+  "displayName": "BoxLite Cloud",
   "description": "Deploy and manage BoxLite cloud applications with ease",
-  "version": "0.0.9",
+  "version": "0.1.0",
   "publisher": "FD-System-Holdings",
   "engines": {
     "vscode": "^1.80.0"
@@ -30,7 +30,7 @@
         {
           "id": "boxlite-explorer",
           "title": "BoxLite",
-          "icon": "media/boxlite-icon.svg"
+          "icon": "media/boxliteCloud.jpg"
         }
       ]
     },

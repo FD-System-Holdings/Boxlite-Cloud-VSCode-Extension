@@ -1,48 +1,48 @@
-# BoxLite for Visual Studio Code (`rc-boxlite-vscode`)
+# BoxLite Cloud for Visual Studio Code
 
 Deploy and manage applications on **BoxLite Cloud** directly from VS Code.
 
-Modeled after the Azure Functions extension workflow, **BoxLite for VS Code** provides a unified developer experience for creating, deploying, tunneling, configuring network isolation, streaming logs, and inspecting your microVM Box instances.
+This extension provides a unified developer experience for creating, deploying, tunneling, configuring network isolation, streaming logs, and inspecting your microVM Box instances within a Boxlite Cloud instance.
 
 ---
 
 ## Key Features
 
-- **🚀 1-Click Deploy ("Deploy to Box"):** Seamless deployment pipeline following canonical BoxLite practices:
+- **1-Click Deploy ("Deploy to Box"):** Deployment Pipleline:
   - Automates supervisor loops (`PID 1` foreground lifecycle) to prevent premature container exits.
-  - Copies code into guest rootfs without extra nesting (`copy_in`).
-  - Verifies local guest health probes (`/healthz` on `0.0.0.0:8080`).
-  - Establishes public or private tunnels and verifies external proxy propagation.
+  - Verifies local guest health (`/healthz` on `0.0.0.0:8080`).
+  - Establishes private tunnels.
   - Automatically preserves and updates `boxId` in `boxlite.json` for rapid updates.
-- **⚙️ Advanced Box Creation Configuration Wizard:** Comprehensive list of options for customizing every aspect of a new Box:
+- **Advanced Box Creation Configuration Wizard:** Comprehensive list of options for customizing every aspect of a new Box:
   - **Base Images:** Quick selection of official Cloud image aliases (`python`, `node`, `ubuntu`, `debian`, `alpine`) or custom OCI container tags.
   - **Compute & Memory Sizing:** Choose preset tiers (Small: 1 vCPU / 2GB RAM / 10GB Disk, Medium: 2 vCPU / 4GB RAM / 20GB Disk, Large: 4 vCPU / 8GB RAM / 40GB Disk) or custom vCPU/RAM/Disk quotas.
   - **Network Policies:** Inbound proxy access toggle and outbound egress policies (Unrestricted `allow_net=[]`, Restricted Allowlist with strict host/CIDR validation, or Air-Gapped / Disabled without NIC).
   - **Lifecycle Management:** Idle auto-stop intervals (0s disabled, 5m, 15m, 30m, 1h, custom) and auto-delete lifecycle duration (0s persistent, 1d, 7d, custom).
   - **Auto-Resume:** Automatic request wake-up upon incoming HTTP proxy requests.
-  - **Entrypoint & Supervisor:** Canonical `/app/server.py` supervisor, persistent keepalive shell loop, image default, or custom commands.
+  - **Entrypoint & Supervisor:** `/app/server.py` supervisor, persistent keepalive shell loop, image default, or custom commands.
   - **Environment Variables:** Interactive key-value editor (`KEY=VALUE`).
   - **Verified Templates:** One-click presets for Python Web Apps, Node.js APIs, Egress-Restricted Boxes, and Air-Gapped Sandboxes.
   - **Project Persistence:** Save created configurations directly to `boxlite.json`.
-- **🌲 BoxLite Explorer Tree View:**
+
+- **BoxLite Explorer Tree View:**
   - View account status and active REST API target.
   - Real-time status for all Boxes (Running, Stopped, Provisioning).
-  - Inspect tunnels, active public/private URLs, mounted persistent volumes, and network rules.
+  - Inspect tunnels, active public/private URLs, persistent volumes, and network rules.
   - Direct context menu actions: Start, Stop, Restart, Stream Logs, Exec CLI, Inspect JSON, and Delete.
-- **🗄️ Managed Volumes Menu & Explorer (`boxlite.volumesView`):**
-  - Dedicated Volumes menu in the Activity Bar panel to view and manage persistent storage within BoxLite Cloud.
-  - Create new persistent volumes (`Add New Volume...`) with optional user-assigned names or auto-generated identifiers.
+- **Managed Volumes Menu & Explorer (`boxlite.volumesView`):**
+  - Dedicated Volumes menu in the Activity Bar panel to view and manage storage within BoxLite Cloud.
+  - Create new persistent volumes (`Add New Volume...`) with optional names or auto-generated identifiers.
   - Inspect volume state (`ready`, `creating`, `deleting`), volume IDs, and creation timestamps.
   - Mount volumes into existing boxes or workspace project configuration (`boxlite.json`).
-  - Safe volume deletion with permanent data loss confirmation and force-deletion options (§4).
+  - Safe volume deletion with permanent data loss confirmation and force-deletion options.
   - Copy Volume ID and Name to clipboard for scripting and CLI compatibility.
-- **🛡️ Granular Network & Security Policies:**
+- **Granular Network & Security Policies:**
   - Inbound toggle: Enable or disable Cloud proxy access.
   - Outbound allowlist editor: Strict validation for hostnames (`api.example.com`), wildcards (`*.example.com`), IPv4 (`1.2.3.4`), and CIDR (`10.0.0.0/8`).
   - Private access token support (`X-BoxLite-Access-Token`).
-- **📋 Live Application Log Streaming:**
+- **Live Application Log Streaming:**
   - Real-time output channel tailing `/tmp/server.log`.
-- **✨ Project Scaffolding:**
+- **Project Scaffolding:**
   - Generates ready-to-run Python HTTP services binding `0.0.0.0:8080` with a healthy `/healthz` route, `boxlite.json`, `.boxliteignore`, and `.gitignore`.
 
 ---
@@ -96,11 +96,11 @@ When creating a Box via `BoxLite: Create Box with Options...` (or by choosing **
 | **Save to Project** | Save to `boxlite.json` | Persists configuration into workspace project file |
 
 ### Configuration Templates
-- 🐍 **Python Web Application (agent.md §1 Canonical):** Python image, 2 vCPU, 4GB RAM, inbound enabled, unrestricted outbound, supervisor entrypoint, port 8080.
-- 🟢 **Node.js Web Application:** Node.js image, 2 vCPU, 4GB RAM, inbound enabled, unrestricted outbound, supervisor entrypoint (`npm start`), port 3000.
-- 🛡️ **Secure Egress-Restricted Box (agent.md §3):** Python image, inbound enabled, restricted outbound allowlist, 15m idle auto-stop.
-- 🔒 **Air-Gapped Isolated Sandbox (agent.md §3):** Python image, 1 vCPU, 2GB RAM, inbound disabled, outbound disabled (no NIC provisioned), 5m idle auto-stop.
-- 🐧 **Ubuntu Linux Utility:** Ubuntu image, 2 vCPU, 4GB RAM, keepalive entrypoint, 30m idle auto-stop.
+- **Python Web Application:** Python image, 2 vCPU, 4GB RAM, inbound enabled, unrestricted outbound, supervisor entrypoint, port 8080.
+- **Node.js Web Application:** Node.js image, 2 vCPU, 4GB RAM, inbound enabled, unrestricted outbound, supervisor entrypoint (`npm start`), port 3000.
+- **Secure Egress-Restricted Box:** Python image, inbound enabled, restricted outbound allowlist, 15m idle auto-stop.
+- **Air-Gapped Isolated Sandbox:** Python image, 1 vCPU, 2GB RAM, inbound disabled, outbound disabled (no NIC provisioned), 5m idle auto-stop.
+- **Ubuntu Linux Utility:** Ubuntu image, 2 vCPU, 4GB RAM, keepalive entrypoint, 30m idle auto-stop.
 
 ---
 
@@ -139,7 +139,7 @@ When creating a Box via `BoxLite: Create Box with Options...` (or by choosing **
 
 ---
 
-## Persistent Volumes & Lifecycle Guidelines ([agent.md §4](https://boxlite.ai/agent.md))
+## Persistent Volumes & Lifecycle Guidelines
 
 - **Managed Volumes:** Volumes created in BoxLite Cloud are attached as block devices and formatted for persistent storage across Box stop/start lifecycles.
 - **Rootfs Boundary:** Transfers via `copy_in` operate exclusively on the guest rootfs layer. Paths at or under guest mount points (including `/data`, `/tmp`, `/dev/shm`, and mounted volumes) can be refused because they hide rootfs content. For data inside mounted volumes, use an exec-based archive/stream workflow or configure your application to write directly to the volume mount point.
