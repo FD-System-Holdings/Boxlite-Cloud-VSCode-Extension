@@ -1,9 +1,9 @@
 {
-  "name": "rc-boxlite-vscode",
+  "name": "boxlite-cloud-vscode-extension",
   "displayName": "BoxLite",
   "description": "Deploy and manage BoxLite cloud applications with ease",
-  "version": "0.1.0",
-  "publisher": "boxlite",
+  "version": "0.0.8",
+  "publisher": "FD-System-Holdings",
   "engines": {
     "vscode": "^1.80.0"
   },
