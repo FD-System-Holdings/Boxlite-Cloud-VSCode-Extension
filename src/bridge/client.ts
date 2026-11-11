@@ -11,7 +11,13 @@ import {
   TunnelResult,
   TailLogResult,
   VolumeItem,
-  CreateVolumeArgs
+  CreateVolumeArgs,
+  ImageItem,
+  ImageUsage,
+  ImageDetail,
+  RegistryLoginArgs,
+  CreateImageAliasArgs,
+  DeleteImageAliasArgs
 } from './protocol';
 import { CredentialsManager } from '../auth/credentials';
 import { PythonEnvManager } from './env';
@@ -264,6 +270,33 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
 
   public async removeVolume(volumeId: string, force = false): Promise<{ volumeId: string; removed: boolean }> {
     return this.sendRequest<{ volumeId: string; removed: boolean }>('remove_volume', { volumeId, force }, 30000);
+  }
+
+  // Image Operations
+  public async listImages(): Promise<{ images: ImageItem[]; usage?: ImageUsage }> {
+    const res = await this.sendRequest<{ images: ImageItem[]; usage?: ImageUsage }>('list_images', {}, 20000);
+    return res || { images: [] };
+  }
+
+  public async inspectImage(name: string): Promise<ImageDetail> {
+    const res = await this.sendRequest<{ image: ImageDetail }>('inspect_image', { name }, 20000);
+    return res.image;
+  }
+
+  public async removeImage(name: string): Promise<{ name: string; removed: boolean }> {
+    return this.sendRequest<{ name: string; removed: boolean }>('remove_image', { name }, 30000);
+  }
+
+  public async createImageAlias(args: CreateImageAliasArgs): Promise<{ name: string; alias: string; digest: string }> {
+    return this.sendRequest('create_image_alias', args, 30000);
+  }
+
+  public async deleteImageAlias(args: DeleteImageAliasArgs): Promise<{ name: string; alias: string; deleted: boolean }> {
+    return this.sendRequest('delete_image_alias', args, 30000);
+  }
+
+  public async createRegistryLogin(args: RegistryLoginArgs): Promise<{ success: boolean; registryHost: string }> {
+    return this.sendRequest('create_registry_login', args, 30000);
   }
 
   public restartBridge() {

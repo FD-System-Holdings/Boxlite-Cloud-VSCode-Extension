@@ -4,6 +4,7 @@ import { PythonEnvManager } from './bridge/env';
 import { BoxLiteBridgeClient } from './bridge/client';
 import { BoxesTreeDataProvider } from './tree/boxesProvider';
 import { VolumesTreeDataProvider } from './tree/volumesProvider';
+import { ImagesTreeDataProvider } from './tree/imagesProvider';
 import { BoxLiteDeployer } from './deploy/deployer';
 import { LogStreamManager } from './logs/logStream';
 import { registerCommands } from './commands';
@@ -31,6 +32,13 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(treeView);
 
+  const imagesProvider = new ImagesTreeDataProvider(bridge, credentials);
+  const imagesTreeView = vscode.window.createTreeView('boxlite.imagesView', {
+    treeDataProvider: imagesProvider,
+    showCollapseAll: true
+  });
+  context.subscriptions.push(imagesTreeView);
+
   const volumesProvider = new VolumesTreeDataProvider(bridge, credentials);
   const volumesTreeView = vscode.window.createTreeView('boxlite.volumesView', {
     treeDataProvider: volumesProvider,
@@ -46,6 +54,7 @@ export async function activate(context: vscode.ExtensionContext) {
     () => {
       treeProvider.refresh();
       volumesProvider.refresh();
+      imagesProvider.refresh();
     }
   );
 
@@ -58,7 +67,20 @@ export async function activate(context: vscode.ExtensionContext) {
     treeProvider,
     deployer,
     logManager,
-    volumesProvider
+    volumesProvider,
+    imagesProvider
+  );
+
+  // Configuration change listener
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (
+        e.affectsConfiguration('boxlite.defaultImage') ||
+        e.affectsConfiguration('boxlite.customImages')
+      ) {
+        imagesProvider.refresh();
+      }
+    })
   );
 
   // Status Bar Item

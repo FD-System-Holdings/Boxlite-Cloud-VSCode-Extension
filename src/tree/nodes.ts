@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { BoxListItem, TunnelInfo, VolumeItem } from '../bridge/protocol';
+import { BoxListItem, TunnelInfo, VolumeItem, ImageItem, ImageUsage } from '../bridge/protocol';
 
 export abstract class BoxLiteTreeItem extends vscode.TreeItem {
   constructor(
@@ -135,6 +135,133 @@ export class VolumeChildTreeItem extends BoxLiteTreeItem {
     collapsible: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
     contextValue?: string,
     public readonly volumeId?: string,
+    tooltip?: string
+  ) {
+    super(label, collapsible);
+    this.description = description;
+    this.tooltip = tooltip || description;
+    if (icon) {
+      this.iconPath = new vscode.ThemeIcon(icon);
+    }
+    this.command = command;
+    this.contextValue = contextValue;
+  }
+}
+
+export function formatBytes(bytes?: number): string {
+  if (!bytes || bytes <= 0) {
+    return '0 B';
+  }
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let val = bytes;
+  let idx = 0;
+  while (val >= 1024 && idx < units.length - 1) {
+    val /= 1024;
+    idx++;
+  }
+  return `${val.toFixed(1).replace(/\.0$/, '')} ${units[idx]}`;
+}
+
+export class ImageUsageTreeItem extends BoxLiteTreeItem {
+  constructor(public readonly usage: ImageUsage) {
+    const bytesFormatted = formatBytes(usage.knownBytes);
+    super(`${usage.count} of ${usage.limit} images · ${bytesFormatted}`, vscode.TreeItemCollapsibleState.None);
+    this.description = usage.count >= usage.limit ? 'Limit reached' : (usage.count >= usage.limit - 2 ? 'Near limit' : undefined);
+    this.iconPath = new vscode.ThemeIcon(
+      usage.count >= usage.limit ? 'warning' : 'layers',
+      usage.count >= usage.limit ? new vscode.ThemeColor('testing.iconFailed') : undefined
+    );
+    this.tooltip = `BoxLite Cloud Organization Catalog Usage:\n${usage.count} of ${usage.limit} custom images recorded (${bytesFormatted}). Limit: ${usage.limit} per organization.\n\nBuilt-in images (base, python, node, sandbaseai-hermes) are free and do not count against this limit (agent.md & docs.boxlite.ai/cloud/image-catalog).`;
+    this.contextValue = 'image-usage-item';
+  }
+}
+
+export class ImageGroupTreeItem extends BoxLiteTreeItem {
+  constructor(
+    label: string,
+    description?: string,
+    icon: string = 'package',
+    collapsible: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.Expanded
+  ) {
+    super(label, collapsible);
+    this.description = description;
+    this.iconPath = new vscode.ThemeIcon(icon);
+    this.contextValue = 'image-group-item';
+  }
+}
+
+export class ImageTreeItem extends BoxLiteTreeItem {
+  public readonly image: ImageItem;
+
+  constructor(image: ImageItem) {
+    super(image.name, vscode.TreeItemCollapsibleState.Collapsed);
+    this.image = image;
+
+    const isBuiltin = !!image.builtin;
+    const isDefault = !!image.isDefault;
+    const isRecorded = image.recorded !== false;
+    const boxCount = image.boxCount || (image.boxes ? image.boxes.length : 0);
+
+    const parts: string[] = [];
+    if (isDefault) {
+      parts.push('★ default');
+    }
+    if (isBuiltin) {
+      parts.push('free');
+    } else if (!isRecorded) {
+      parts.push('saved (not booted)');
+    }
+
+    if (boxCount > 0) {
+      parts.push(`${boxCount} ${boxCount === 1 ? 'box' : 'boxes'}`);
+    } else if (!isDefault && isRecorded) {
+      parts.push('unused');
+    }
+
+    if (image.sizeBytes && image.sizeBytes > 0) {
+      parts.push(formatBytes(image.sizeBytes));
+    }
+
+    this.description = parts.join(' · ');
+
+    let tooltip = `Image: ${image.name}\nType: ${isBuiltin ? 'BoxLite Built-in (free · not counted)' : 'Catalog / Custom'}`;
+    if (isDefault) {
+      tooltip += '\nStatus: Default creation image (boxlite.defaultImage)';
+    }
+    if (boxCount > 0) {
+      tooltip += `\nIn use by: ${boxCount} active box(es)`;
+    }
+    if (image.lastUsedAt) {
+      tooltip += `\nLast used: ${image.lastUsedAt}`;
+    }
+    if (image.sizeBytes) {
+      tooltip += `\nSize: ${formatBytes(image.sizeBytes)}`;
+    }
+    this.tooltip = tooltip;
+
+    if (isDefault) {
+      this.iconPath = new vscode.ThemeIcon('star-full', new vscode.ThemeColor('symbolIcon.fieldForeground'));
+    } else if (isBuiltin) {
+      this.iconPath = new vscode.ThemeIcon('symbol-package', new vscode.ThemeColor('symbolIcon.colorForeground'));
+    } else if (!isRecorded) {
+      this.iconPath = new vscode.ThemeIcon('cloud-download');
+    } else {
+      this.iconPath = new vscode.ThemeIcon('package');
+    }
+
+    this.contextValue = `image-item ${isBuiltin ? 'image-builtin' : 'image-custom'}${isDefault ? ' image-default' : ''}${isRecorded ? ' image-recorded' : ' image-unrecorded'}${boxCount > 0 ? ' image-in-use' : ''}`;
+  }
+}
+
+export class ImageChildTreeItem extends BoxLiteTreeItem {
+  constructor(
+    label: string,
+    description?: string,
+    icon?: string,
+    command?: vscode.Command,
+    collapsible: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
+    contextValue?: string,
+    public readonly imageName?: string,
     tooltip?: string
   ) {
     super(label, collapsible);

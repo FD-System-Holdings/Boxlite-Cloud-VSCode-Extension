@@ -29,6 +29,14 @@ This extension provides a unified developer experience for creating, deploying, 
   - Real-time status for all Boxes (Running, Stopped, Provisioning).
   - Inspect tunnels, active public/private URLs, persistent volumes, and network rules.
   - Direct context menu actions: Start, Stop, Restart, Stream Logs, Exec CLI, Inspect JSON, and Delete.
+- **Images Menu & Explorer (`boxlite.imagesView`):**
+  - Dedicated Images menu positioned directly between **Boxes** and **Volumes** in the BoxLite Activity Bar sidebar.
+  - Browse official BoxLite built-in images (`base`, `python`, `node`, `sandbaseai-hermes`), marked free and exempt from organization image quotas.
+  - Track organization catalog image usage against the 20-image limit (e.g. `2 of 20 images · 3.5 MiB`).
+  - Add and boot custom public container images from Docker Hub, GitHub Container Registry (`ghcr.io`), Quay, or Google Container Registry.
+  - Connect private container registries (`Connect Private Registry...`) with scoped credentials and repository prefixes.
+  - Pin, promote, and roll back version aliases (e.g. `stable`, `prod`) linked directly to exact sha256 build digests.
+  - One-click "Create Box from Image...", "Set as Default Image", and safe catalog deletion.
 - **Managed Volumes Menu & Explorer (`boxlite.volumesView`):**
   - Dedicated Volumes menu in the Activity Bar panel to view and manage storage within BoxLite Cloud.
   - Create new persistent volumes (`Add New Volume...`) with optional names or auto-generated identifiers.
@@ -147,6 +155,23 @@ When creating a Box via `BoxLite: Create Box with Options...` (or by choosing **
 
 ---
 
+## Images & Container Registry Guide
+
+- **Built-in Images:** BoxLite Cloud provides four maintained base images:
+  - `base`: A minimal, general-purpose Linux environment.
+  - `python`: Python 3 runtime, ready for immediate execution.
+  - `node`: Node.js runtime, ready for JavaScript/TypeScript services.
+  - `sandbaseai-hermes`: Official Hermes agent image preinstalled.
+  *Note:* Built-in images are free and do not count against your organization's 20-image catalog limit.
+- **Using Custom Images:** Any OCI container image from a public registry can be booted with no approval or manual upload required (e.g. `docker.io/library/alpine:3.20` or `ghcr.io/acme/api:1.4.0`).
+- **Namespace Shadowing Notice:** The short aliases `base`, `python`, and `node` refer to BoxLite's built-in images, not Docker Hub's. To boot an official image from Docker Hub, specify its full reference (e.g. `docker.io/library/python:3.12-slim`).
+- **Catalog Lifecycle & Boot Recording Delay:** The first time a box boots an image, it is recorded in your organization catalog. Recording occurs when the microVM finishes booting (~12 seconds after launch), not when creation returns.
+- **Organization Quota:** Catalogs support up to 20 recorded custom images. Images unused by active boxes can be safely deleted via the context menu.
+- **Build Pinning & Rollbacks (Aliases):** Attach named aliases (e.g. `stable`, `prod`) to exact sha256 digests. Moving an alias promotes or rolls back production deployments instantly without touching external registries.
+- **Private Registries:** Register credentials for private image repositories on `ghcr.io`, `docker.io`, `quay.io`, and `gcr.io`. Password/token credentials are write-only and require a Full-access Cloud API key.
+
+---
+
 ## Extension Commands
 
 | Command | Title | Description |
@@ -169,6 +194,15 @@ When creating a Box via `BoxLite: Create Box with Options...` (or by choosing **
 | `boxlite.configureOutbound` | Configure Outbound Network Policy | Set outbound mode & hostname allowlists |
 | `boxlite.execCommand` | Execute Command in Box... | Run ad-hoc shell commands in Box |
 | `boxlite.inspectBox` | Inspect Box (JSON) | View complete Box state JSON |
+| `boxlite.refreshImages` | Refresh Images | Refresh the Images catalog and explorer view |
+| `boxlite.addImage` | Use Your Own Image... | Add custom image reference or boot microVM from registry |
+| `boxlite.createBoxFromImage` | Create Box from Image... | Launch a new Box preconfigured with selected image |
+| `boxlite.setDefaultImage` | Set as Default Image | Set image as workspace default for future box creation |
+| `boxlite.copyImageName` | Copy Image Reference | Copy image reference or alias to clipboard |
+| `boxlite.inspectImage` | Inspect Image (JSON) | View catalog build versions, digests, and history |
+| `boxlite.pinImageAlias` | Pin Image Alias... | Attach version alias to exact build digest |
+| `boxlite.removeImage` | Delete Image | Safely remove image from organization catalog |
+| `boxlite.addRegistryLogin` | Connect Private Registry... | Configure authentication for private image registries |
 | `boxlite.createVolume` | Add New Volume... | Create a new persistent volume in BoxLite Cloud |
 | `boxlite.refreshVolumes` | Refresh Volumes | Refresh the Volumes explorer view |
 | `boxlite.deleteVolume` | Delete Volume | Remove a persistent volume with confirmation (§4) |

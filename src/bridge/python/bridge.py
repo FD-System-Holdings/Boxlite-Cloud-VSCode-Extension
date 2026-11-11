@@ -277,6 +277,51 @@ class RestRuntimeFallback:
         path = f"/volumes/{volume_id}?force=true" if force else f"/volumes/{volume_id}"
         await loop.run_in_executor(None, self._request, "DELETE", path)
 
+    async def list_images(self) -> Dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        try:
+            res = await loop.run_in_executor(None, self._request, "GET", "/images")
+            images = res.get("images", res) if isinstance(res, dict) else (res if isinstance(res, list) else [])
+            usage = None
+            try:
+                usage_res = await loop.run_in_executor(None, self._request, "GET", "/images/usage")
+                if isinstance(usage_res, dict):
+                    usage = usage_res
+            except Exception:
+                pass
+            return {"images": images, "usage": usage}
+        except Exception as e:
+            log_debug(f"RestRuntimeFallback.list_images failed: {e}")
+            return {"images": [], "usage": None}
+
+    async def get_image(self, name: str) -> Dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._request, "GET", f"/images/{name}")
+
+    async def remove_image(self, name: str) -> None:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._request, "DELETE", f"/images/{name}")
+
+    async def create_image_alias(self, name: str, alias: str, digest: str) -> Dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        body = {"alias": alias, "digest": digest}
+        return await loop.run_in_executor(None, self._request, "POST", f"/images/{name}/aliases", body)
+
+    async def delete_image_alias(self, name: str, alias: str) -> None:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._request, "DELETE", f"/images/{name}/aliases/{alias}")
+
+    async def create_registry_login(self, registry_host: str, username: str, password: str, repository_prefix: Optional[str] = None) -> Dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        body = {
+            "registry_host": registry_host,
+            "username": username,
+            "password": password
+        }
+        if repository_prefix:
+            body["repository_prefix"] = repository_prefix
+        return await loop.run_in_executor(None, self._request, "POST", "/images/registries", body)
+
 
 class BoxLiteBridge:
     def __init__(self):
@@ -906,6 +951,205 @@ class BoxLiteBridge:
         await fallback.remove_volume(volume_id, force=force)
         return {"volumeId": volume_id, "removed": True}
 
+    async def handle_list_images(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        images = []
+        usage = None
+
+        if hasattr(rt, "images"):
+            img_mgr = getattr(rt, "images")
+            if hasattr(img_mgr, "list") and callable(img_mgr.list):
+                try:
+                    images = await img_mgr.list()
+                except Exception as e:
+                    log_debug(f"rt.images.list() failed: {e}")
+            if hasattr(img_mgr, "usage") and callable(img_mgr.usage):
+                try:
+                    u = await img_mgr.usage()
+                    usage = {
+                        "count": getattr(u, "count", 0),
+                        "limit": getattr(u, "limit", 20),
+                        "knownBytes": getattr(u, "known_bytes", getattr(u, "knownBytes", 0))
+                    }
+                except Exception as e:
+                    log_debug(f"rt.images.usage() failed: {e}")
+
+        if not images and not usage:
+            fallback = RestRuntimeFallback(
+                os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+                os.environ.get("BOXLITE_API_KEY", "")
+            )
+            fallback_res = await fallback.list_images()
+            images = fallback_res.get("images", [])
+            usage = fallback_res.get("usage")
+
+        formatted_images = []
+        for img in images:
+            if isinstance(img, dict):
+                formatted_images.append(img)
+            elif isinstance(img, str):
+                formatted_images.append({"name": img})
+            else:
+                formatted_images.append({
+                    "name": getattr(img, "name", str(img)),
+                    "tags": getattr(img, "tags", []),
+                    "boxCount": getattr(img, "box_count", getattr(img, "boxCount", 0)),
+                    "lastUsedAt": getattr(img, "last_used_at", getattr(img, "lastUsedAt", None)),
+                    "sizeBytes": getattr(img, "size_bytes", getattr(img, "sizeBytes", None))
+                })
+
+        return {
+            "images": formatted_images,
+            "usage": usage or {"count": len(formatted_images), "limit": 20, "knownBytes": 0}
+        }
+
+    async def handle_inspect_image(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        name = args["name"]
+        data = None
+
+        if hasattr(rt, "images") and hasattr(getattr(rt, "images"), "get"):
+            try:
+                img_mgr = getattr(rt, "images")
+                detail = await img_mgr.get(name)
+                if hasattr(detail, "to_dict"):
+                    data = detail.to_dict()
+                elif hasattr(detail, "__dict__"):
+                    data = {k: v for k, v in detail.__dict__.items() if not k.startswith("_")}
+                else:
+                    data = {
+                        "name": getattr(detail, "name", name),
+                        "versions": [
+                            {
+                                "digest": getattr(v, "digest", ""),
+                                "lastUsedAt": getattr(v, "last_used_at", getattr(v, "lastUsedAt", None)),
+                                "sizeBytes": getattr(v, "size_bytes", getattr(v, "sizeBytes", None))
+                            }
+                            for v in getattr(detail, "versions", [])
+                        ],
+                        "aliases": [
+                            {
+                                "alias": getattr(a, "alias", ""),
+                                "digest": getattr(a, "digest", "")
+                            }
+                            for a in getattr(detail, "aliases", [])
+                        ],
+                        "history": [
+                            {
+                                "alias": getattr(h, "alias", ""),
+                                "fromDigest": getattr(h, "from_digest", getattr(h, "fromDigest", None)),
+                                "toDigest": getattr(h, "to_digest", getattr(h, "toDigest", "")),
+                                "recordedAt": getattr(h, "recorded_at", getattr(h, "recordedAt", None))
+                            }
+                            for h in getattr(detail, "history", [])
+                        ]
+                    }
+            except Exception as e:
+                log_debug(f"rt.images.get() failed ({e}), falling back to REST")
+
+        if data is None:
+            fallback = RestRuntimeFallback(
+                os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+                os.environ.get("BOXLITE_API_KEY", "")
+            )
+            try:
+                data = await fallback.get_image(name)
+            except Exception as e:
+                data = {"name": name, "versions": [], "aliases": [], "history": []}
+
+        return {"image": data}
+
+    async def handle_remove_image(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        name = args["name"]
+        if hasattr(rt, "images"):
+            img_mgr = getattr(rt, "images")
+            if hasattr(img_mgr, "remove") and callable(img_mgr.remove):
+                try:
+                    await img_mgr.remove(name)
+                    return {"name": name, "removed": True}
+                except Exception as e:
+                    log_debug(f"rt.images.remove() failed ({e}), falling back to REST")
+
+        fallback = RestRuntimeFallback(
+            os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+            os.environ.get("BOXLITE_API_KEY", "")
+        )
+        await fallback.remove_image(name)
+        return {"name": name, "removed": True}
+
+    async def handle_create_image_alias(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        name = args["name"]
+        alias = args["alias"]
+        digest = args["digest"]
+        if hasattr(rt, "images"):
+            img_mgr = getattr(rt, "images")
+            if hasattr(img_mgr, "create_alias") and callable(img_mgr.create_alias):
+                try:
+                    await img_mgr.create_alias(name=name, alias=alias, digest=digest)
+                    return {"name": name, "alias": alias, "digest": digest}
+                except Exception as e:
+                    log_debug(f"rt.images.create_alias() failed ({e}), falling back to REST")
+
+        fallback = RestRuntimeFallback(
+            os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+            os.environ.get("BOXLITE_API_KEY", "")
+        )
+        res = await fallback.create_image_alias(name, alias, digest)
+        return {"name": name, "alias": alias, "digest": digest}
+
+    async def handle_delete_image_alias(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        name = args["name"]
+        alias = args["alias"]
+        if hasattr(rt, "images"):
+            img_mgr = getattr(rt, "images")
+            if hasattr(img_mgr, "delete_alias") and callable(img_mgr.delete_alias):
+                try:
+                    await img_mgr.delete_alias(name=name, alias=alias)
+                    return {"name": name, "alias": alias, "deleted": True}
+                except Exception as e:
+                    log_debug(f"rt.images.delete_alias() failed ({e}), falling back to REST")
+
+        fallback = RestRuntimeFallback(
+            os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+            os.environ.get("BOXLITE_API_KEY", "")
+        )
+        await fallback.delete_image_alias(name, alias)
+        return {"name": name, "alias": alias, "deleted": True}
+
+    async def handle_create_registry_login(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        registry_host = args["registryHost"]
+        username = args["username"]
+        password = args["password"]
+        prefix = args.get("repositoryPrefix")
+        log_debug(f"Registering registry login for {registry_host} (user: {username})")
+
+        if hasattr(rt, "images") and hasattr(getattr(rt, "images"), "registries"):
+            reg_mgr = getattr(getattr(rt, "images"), "registries")
+            if hasattr(reg_mgr, "create") and callable(reg_mgr.create):
+                try:
+                    kwargs = {
+                        "registry_host": registry_host,
+                        "username": username,
+                        "password": password
+                    }
+                    if prefix:
+                        kwargs["repository_prefix"] = prefix
+                    await reg_mgr.create(**kwargs)
+                    return {"success": True, "registryHost": registry_host}
+                except Exception as e:
+                    log_debug(f"rt.images.registries.create() failed ({e}), falling back to REST")
+
+        fallback = RestRuntimeFallback(
+            os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+            os.environ.get("BOXLITE_API_KEY", "")
+        )
+        await fallback.create_registry_login(registry_host, username, password, prefix)
+        return {"success": True, "registryHost": registry_host}
+
     async def dispatch(self, req: Dict[str, Any]):
         req_id = req.get("id", "none")
         op = req.get("op", "")
@@ -940,7 +1184,7 @@ class BoxLiteBridge:
             elif "401" in message or "unauthorized" in message.lower() or ("invalid credentials" in message.lower() and "403" not in message):
                 diagnosis = "401 Unauthorized: Invalid credentials or missing token. Check credentials and BOXLITE_API_KEY via 'BoxLite: Sign In / Set API Key' (agent.md §5)."
             elif "403" in message or "forbidden" in message.lower():
-                diagnosis = "403 Forbidden: Check authentication/token and requested URL; do not assume either app health or one particular policy cause (agent.md §5). Note: do not infer managed database or shared-volume support (agent.md §4)."
+                diagnosis = "403 Forbidden: Check authentication/token and requested URL; do not assume either app health or one particular policy cause (agent.md §5). Note: do not infer managed database or shared-volume support (agent.md §4). For private images or registries, ensure API key has Full access (docs.boxlite.ai/cloud/private-images)."
             elif "409" in message or "already ran" in message.lower() or "conflict" in message.lower():
                 diagnosis = "409 Conflict: Process already ran or name conflict. Check supervisor entrypoint and box lifecycle (agent.md §5)."
             elif "400" in message or "bad request" in message.lower():

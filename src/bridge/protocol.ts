@@ -53,6 +53,66 @@ export interface CreateVolumeArgs {
   name?: string;
 }
 
+export interface ImageUsage {
+  count: number;
+  limit: number;
+  knownBytes: number;
+}
+
+export interface ImageVersion {
+  digest: string;
+  lastUsedAt?: string;
+  sizeBytes?: number;
+}
+
+export interface ImageAliasInfo {
+  alias: string;
+  digest: string;
+}
+
+export interface ImageHistoryEvent {
+  alias: string;
+  fromDigest?: string;
+  toDigest: string;
+  recordedAt?: string;
+}
+
+export interface ImageItem {
+  name: string;
+  tags?: string[];
+  boxCount?: number;
+  lastUsedAt?: string;
+  sizeBytes?: number;
+  builtin?: boolean;
+  recorded?: boolean;
+  isDefault?: boolean;
+  boxes?: { id: string; name: string; status: string }[];
+}
+
+export interface ImageDetail extends ImageItem {
+  versions: ImageVersion[];
+  aliases: ImageAliasInfo[];
+  history: ImageHistoryEvent[];
+}
+
+export interface RegistryLoginArgs {
+  registryHost: string;
+  username: string;
+  password: string;
+  repositoryPrefix?: string;
+}
+
+export interface CreateImageAliasArgs {
+  name: string;
+  alias: string;
+  digest: string;
+}
+
+export interface DeleteImageAliasArgs {
+  name: string;
+  alias: string;
+}
+
 export interface NetworkConfig {
   inbound?: {
     mode: 'enabled' | 'disabled';

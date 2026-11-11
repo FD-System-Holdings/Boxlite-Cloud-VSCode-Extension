@@ -139,3 +139,120 @@ export function validateGuestPath(guestPath: string): { valid: boolean; error?: 
 
   return { valid: true };
 }
+
+export function validateImageReference(imageRef: string): { valid: boolean; error?: string; warning?: string } {
+  const trimmed = imageRef.trim();
+  if (!trimmed) {
+    return { valid: false, error: 'Image reference cannot be empty.' };
+  }
+
+  if (/\s/.test(trimmed)) {
+    return { valid: false, error: 'Image reference must not contain whitespace.' };
+  }
+
+  if (trimmed.includes('://')) {
+    return { valid: false, error: 'Image reference must not include URL scheme (http:// or https://).' };
+  }
+
+  const bareBuiltins = ['base', 'python', 'node', 'sandbaseai-hermes'];
+  if (bareBuiltins.includes(trimmed.toLowerCase())) {
+    return {
+      valid: true,
+      warning: `Notice: '${trimmed}' refers to BoxLite's built-in image, not Docker Hub's. To use an image from Docker Hub, specify the full reference (e.g. 'docker.io/library/${trimmed}:latest') (agent.md & docs.boxlite.ai/cloud/images).`
+    };
+  }
+
+  // General image reference pattern: [registry[:port]/][namespace/]repository[:tag][@sha256:digest]
+  const refRegex = /^[a-zA-Z0-9_.-]+(?::[0-9]+)?(?:\/[a-zA-Z0-9_.-]+)*(?::[a-zA-Z0-9_.-]+)?(?:@sha256:[a-fA-F0-9]{64})?$/;
+  if (!refRegex.test(trimmed)) {
+    return {
+      valid: false,
+      error: `Invalid image reference "${trimmed}". Expected format: [host/][namespace/]name[:tag][@sha256:digest] (e.g. 'docker.io/library/alpine:3.20' or 'ghcr.io/acme/api:1.4.0').`
+    };
+  }
+
+  return { valid: true };
+}
+
+export function validateAliasName(alias: string): { valid: boolean; error?: string } {
+  const trimmed = alias.trim();
+  if (!trimmed) {
+    return { valid: false, error: 'Alias name cannot be empty.' };
+  }
+  if (trimmed.length > 128) {
+    return { valid: false, error: 'Alias name cannot exceed 128 characters.' };
+  }
+  const tagRegex = /^[a-zA-Z0-9_.-]+$/;
+  if (!tagRegex.test(trimmed)) {
+    return {
+      valid: false,
+      error: 'Alias name must follow valid tag syntax (alphanumeric characters, underscores, periods, and hyphens).'
+    };
+  }
+  return { valid: true };
+}
+
+export function validateDigest(digest: string): { valid: boolean; error?: string } {
+  const trimmed = digest.trim();
+  if (!trimmed) {
+    return { valid: false, error: 'Digest cannot be empty.' };
+  }
+  const digestRegex = /^sha256:[a-fA-F0-9]{64}$/;
+  if (!digestRegex.test(trimmed)) {
+    return {
+      valid: false,
+      error: 'Digest must start with "sha256:" followed by 64 hexadecimal characters.'
+    };
+  }
+  return { valid: true };
+}
+
+export const ALLOWED_REGISTRY_HOSTS = [
+  'ghcr.io',
+  'docker.io',
+  'quay.io',
+  'gcr.io',
+  'us.gcr.io',
+  'eu.gcr.io',
+  'asia.gcr.io'
+];
+
+export function validateRegistryHost(host: string): { valid: boolean; error?: string } {
+  const trimmed = host.trim().toLowerCase();
+  if (!trimmed) {
+    return { valid: false, error: 'Registry host cannot be empty.' };
+  }
+  if (!ALLOWED_REGISTRY_HOSTS.includes(trimmed)) {
+    return {
+      valid: false,
+      error: `Registry host "${trimmed}" is not supported. Supported hosts: ${ALLOWED_REGISTRY_HOSTS.join(', ')} (docs.boxlite.ai/cloud/private-images).`
+    };
+  }
+  return { valid: true };
+}
+
+export function validateRepositoryPrefix(prefix: string): { valid: boolean; error?: string } {
+  const trimmed = prefix.trim();
+  if (!trimmed) {
+    return { valid: true }; // Optional
+  }
+  if (!trimmed.endsWith('/')) {
+    return {
+      valid: false,
+      error: 'Repository prefix must end with a trailing "/" (e.g. "acme/" or "org/team/"). A prefix without a trailing "/" is refused.'
+    };
+  }
+  if (trimmed.startsWith('/')) {
+    return {
+      valid: false,
+      error: 'Repository prefix must not start with a leading "/".'
+    };
+  }
+  if (/\s/.test(trimmed)) {
+    return {
+      valid: false,
+      error: 'Repository prefix must not contain whitespace.'
+    };
+  }
+  return { valid: true };
+}
