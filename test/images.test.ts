@@ -5,7 +5,7 @@ import {
   ImageTreeItem,
   ImageUsageTreeItem,
   ImageGroupTreeItem,
-  AccountTreeItem,
+  ImageChildTreeItem,
   formatBytes
 } from '../src/tree/nodes';
 import {
@@ -188,13 +188,12 @@ describe('ImagesTreeDataProvider Tree Hierarchy & Lifecycle', () => {
     const items = await provider.getChildren();
 
     assert.strictEqual(items.length, 1);
-    const accountNode = items[0] as AccountTreeItem;
-    assert.strictEqual(accountNode.label, 'BoxLite Cloud (Not Signed In)');
-    assert.strictEqual(accountNode.command?.command, 'boxlite.setApiKey');
-    assert.strictEqual(accountNode.contextValue, 'account-signed-out');
+    const signinNode = items[0] as ImageChildTreeItem;
+    assert.strictEqual(signinNode.label, 'Sign in to BoxLite Cloud');
+    assert.strictEqual(signinNode.command?.command, 'boxlite.setApiKey');
   });
 
-  it('should return Account, Usage, Built-in Group, and Images when signed in', async () => {
+  it('should return Usage, Built-in Group, and Images when signed in', async () => {
     const mockBridge: any = {
       listImages: async () => ({
         images: [{ name: 'docker.io/library/alpine:3.20', sizeBytes: 3630321 }],
@@ -212,21 +211,19 @@ describe('ImagesTreeDataProvider Tree Hierarchy & Lifecycle', () => {
     const provider = new ImagesTreeDataProvider(mockBridge, mockCredentials);
     const rootItems = await provider.getChildren();
 
-    // 1. AccountTreeItem
-    assert.ok(rootItems[0] instanceof AccountTreeItem);
-    assert.strictEqual(rootItems[0].contextValue, 'account-signed-in');
+    assert.strictEqual(rootItems.length, 3);
 
-    // 2. ImageUsageTreeItem
-    assert.ok(rootItems[1] instanceof ImageUsageTreeItem);
-    assert.strictEqual((rootItems[1] as ImageUsageTreeItem).label, '1 of 20 images · 3.5 MiB');
+    // 1. ImageUsageTreeItem
+    assert.ok(rootItems[0] instanceof ImageUsageTreeItem);
+    assert.strictEqual((rootItems[0] as ImageUsageTreeItem).label, '1 of 20 images · 3.5 MiB');
 
-    // 3. ImageGroupTreeItem (Built-in)
-    assert.ok(rootItems[2] instanceof ImageGroupTreeItem);
-    assert.strictEqual((rootItems[2] as ImageGroupTreeItem).label, 'Built-in (free · not counted)');
+    // 2. ImageGroupTreeItem (Built-in)
+    assert.ok(rootItems[1] instanceof ImageGroupTreeItem);
+    assert.strictEqual((rootItems[1] as ImageGroupTreeItem).label, 'Built-in (free · not counted)');
 
-    // 4. Catalog Image
-    assert.ok(rootItems[3] instanceof ImageTreeItem);
-    assert.strictEqual((rootItems[3] as ImageTreeItem).image.name, 'docker.io/library/alpine:3.20');
+    // 3. Catalog Image
+    assert.ok(rootItems[2] instanceof ImageTreeItem);
+    assert.strictEqual((rootItems[2] as ImageTreeItem).image.name, 'docker.io/library/alpine:3.20');
   });
 
   it('should provide the 4 built-in image nodes when expanding Built-in Group', async () => {
@@ -313,8 +310,8 @@ describe('ImagesTreeDataProvider Tree Hierarchy & Lifecycle', () => {
     const provider = new ImagesTreeDataProvider(mockBridge, mockCredentials);
     const rootItems = await provider.getChildren();
 
-    assert.strictEqual(rootItems.length, 2);
-    const errorItem = rootItems[1];
+    assert.strictEqual(rootItems.length, 1);
+    const errorItem = rootItems[0];
     assert.strictEqual(errorItem.label, 'Error loading images');
     assert.ok(String(errorItem.description).includes('403 Forbidden'));
     assert.ok(String(errorItem.description).includes('Full access key'));
@@ -352,14 +349,17 @@ describe('Package.json Images UI Contribution Specifications', () => {
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
 
     const views = pkg.contributes?.views?.['boxlite-explorer'] || [];
+    const accountIndex = views.findIndex((v: any) => v.id === 'boxlite.accountView');
     const boxesIndex = views.findIndex((v: any) => v.id === 'boxlite.boxesView');
     const imagesIndex = views.findIndex((v: any) => v.id === 'boxlite.imagesView');
     const volumesIndex = views.findIndex((v: any) => v.id === 'boxlite.volumesView');
 
+    assert.ok(accountIndex >= 0, 'Expected boxlite.accountView to exist');
     assert.ok(boxesIndex >= 0, 'Expected boxlite.boxesView to exist');
     assert.ok(imagesIndex >= 0, 'Expected boxlite.imagesView to exist');
     assert.ok(volumesIndex >= 0, 'Expected boxlite.volumesView to exist');
 
+    assert.ok(accountIndex < boxesIndex, 'Expected boxlite.accountView to be placed above boxlite.boxesView');
     assert.ok(
       boxesIndex < imagesIndex && imagesIndex < volumesIndex,
       `Images view (index ${imagesIndex}) must be strictly between Boxes view (${boxesIndex}) and Volumes view (${volumesIndex})`

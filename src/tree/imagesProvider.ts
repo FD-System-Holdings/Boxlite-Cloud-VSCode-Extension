@@ -4,7 +4,6 @@ import { CredentialsManager } from '../auth/credentials';
 import { BoxListItem, ImageItem, ImageUsage } from '../bridge/protocol';
 import {
   BoxLiteTreeItem,
-  AccountTreeItem,
   ImageUsageTreeItem,
   ImageGroupTreeItem,
   ImageTreeItem,
@@ -162,14 +161,19 @@ export class ImagesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTr
 
   public async getChildren(element?: BoxLiteTreeItem): Promise<BoxLiteTreeItem[]> {
     if (!element) {
-      // Root level: Account node + Catalog Usage + Builtin Group + Catalog & Custom Images
+      // Root level: Catalog Usage + Builtin Group + Catalog & Custom Images
       const items: BoxLiteTreeItem[] = [];
       const apiKey = await this.credentials.getApiKey();
-      const restUrl = this.credentials.getRestUrl();
-
-      items.push(new AccountTreeItem(restUrl, apiKey));
 
       if (!apiKey) {
+        items.push(
+          new ImageChildTreeItem(
+            'Sign in to BoxLite Cloud',
+            'Use the account section above to sign in',
+            'sign-in',
+            { command: 'boxlite.setApiKey', title: 'Sign In / Set API Key' }
+          )
+        );
         return items;
       }
 

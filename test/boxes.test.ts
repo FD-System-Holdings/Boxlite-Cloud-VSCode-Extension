@@ -148,6 +148,8 @@ describe('Box Tree Items and Lifecycle Management', () => {
     const commands = accountMenus.map((m: any) => m.command);
     assert.ok(commands.includes('boxlite.createBox'), 'Expected createBox in account context menu');
     assert.ok(commands.includes('boxlite.createBoxWithOptions'), 'Expected createBoxWithOptions in account context menu');
+    assert.ok(commands.includes('boxlite.addImage'), 'Expected addImage in account context menu');
+    assert.ok(commands.includes('boxlite.createVolume'), 'Expected createVolume in account context menu');
     assert.ok(commands.includes('boxlite.signOut'), 'Expected signOut in account context menu');
   });
 
@@ -204,8 +206,8 @@ describe('Box Tree Items and Lifecycle Management', () => {
     const provider = new BoxesTreeDataProvider(mockBridge, mockCredentials);
     const rootItems = await provider.getChildren();
 
-    assert.strictEqual(rootItems.length, 2); // AccountTreeItem + Empty State Item
-    const emptyItem = rootItems[1];
+    assert.strictEqual(rootItems.length, 1); // Empty State Item
+    const emptyItem = rootItems[0];
     assert.strictEqual(emptyItem.label, 'No Managed Boxes');
     assert.strictEqual(emptyItem.description, 'Click to create a microvm box');
     assert.strictEqual(emptyItem.command?.command, 'boxlite.createBox');

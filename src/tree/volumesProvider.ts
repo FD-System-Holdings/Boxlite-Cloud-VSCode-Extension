@@ -3,7 +3,6 @@ import { BoxLiteBridgeClient } from '../bridge/client';
 import { CredentialsManager } from '../auth/credentials';
 import {
   BoxLiteTreeItem,
-  AccountTreeItem,
   VolumeTreeItem,
   VolumeChildTreeItem
 } from './nodes';
@@ -29,14 +28,19 @@ export class VolumesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteT
 
   public async getChildren(element?: BoxLiteTreeItem): Promise<BoxLiteTreeItem[]> {
     if (!element) {
-      // Root level: Account node + Volume nodes
+      // Root level: Volume nodes
       const items: BoxLiteTreeItem[] = [];
       const apiKey = await this.credentials.getApiKey();
-      const restUrl = this.credentials.getRestUrl();
-
-      items.push(new AccountTreeItem(restUrl, apiKey));
 
       if (!apiKey) {
+        items.push(
+          new VolumeChildTreeItem(
+            'Sign in to BoxLite Cloud',
+            'Use the account section above to sign in',
+            'sign-in',
+            { command: 'boxlite.setApiKey', title: 'Sign In / Set API Key' }
+          )
+        );
         return items;
       }
 

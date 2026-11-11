@@ -103,8 +103,8 @@ describe('Volume Tree Items and Lifecycle Management', () => {
     const provider = new VolumesTreeDataProvider(mockBridge, mockCredentials);
     const rootItems = await provider.getChildren();
 
-    assert.strictEqual(rootItems.length, 2); // AccountTreeItem + Empty State Item
-    const emptyItem = rootItems[1];
+    assert.strictEqual(rootItems.length, 1); // Empty State Item
+    const emptyItem = rootItems[0];
     assert.strictEqual(emptyItem.label, 'No Managed Volumes');
     assert.strictEqual(emptyItem.command?.command, 'boxlite.createVolume');
   });
@@ -123,8 +123,8 @@ describe('Volume Tree Items and Lifecycle Management', () => {
     const provider = new VolumesTreeDataProvider(mockBridge, mockCredentials);
     const rootItems = await provider.getChildren();
 
-    assert.strictEqual(rootItems.length, 2);
-    const errorItem = rootItems[1];
+    assert.strictEqual(rootItems.length, 1);
+    const errorItem = rootItems[0];
     assert.strictEqual(errorItem.label, 'Error loading volumes');
     assert.strictEqual(errorItem.command?.command, 'boxlite.refreshVolumes');
   });
@@ -143,8 +143,8 @@ describe('Volume Tree Items and Lifecycle Management', () => {
     const provider = new VolumesTreeDataProvider(mockBridge, mockCredentials);
     const rootItems = await provider.getChildren();
 
-    assert.strictEqual(rootItems.length, 2);
-    const errorItem = rootItems[1];
+    assert.strictEqual(rootItems.length, 1);
+    const errorItem = rootItems[0];
     assert.strictEqual(errorItem.label, 'Error loading volumes');
     assert.ok(String(errorItem.description).includes('403 Forbidden'));
     assert.ok(String(errorItem.description).includes('agent.md §4'));

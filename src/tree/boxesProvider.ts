@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { BoxLiteBridgeClient } from '../bridge/client';
 import { CredentialsManager } from '../auth/credentials';
 import { LogStreamManager } from '../logs/logStream';
-import { BoxLiteTreeItem, AccountTreeItem, BoxTreeItem, BoxChildTreeItem } from './nodes';
+import { BoxLiteTreeItem, BoxTreeItem, BoxChildTreeItem } from './nodes';
 
 export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTreeItem> {
   private _onDidChangeTreeData = new vscode.EventEmitter<BoxLiteTreeItem | undefined | null | void>();
@@ -26,14 +26,19 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
 
   public async getChildren(element?: BoxLiteTreeItem): Promise<BoxLiteTreeItem[]> {
     if (!element) {
-      // Root level: Account node + Box nodes
+      // Root level: Box nodes
       const items: BoxLiteTreeItem[] = [];
       const apiKey = await this.credentials.getApiKey();
-      const restUrl = this.credentials.getRestUrl();
-
-      items.push(new AccountTreeItem(restUrl, apiKey));
 
       if (!apiKey) {
+        items.push(
+          new BoxChildTreeItem(
+            'Sign in to BoxLite Cloud',
+            'Use the account section above to sign in',
+            'sign-in',
+            { command: 'boxlite.setApiKey', title: 'Sign In / Set API Key' }
+          )
+        );
         return items;
       }
 

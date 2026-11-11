@@ -37,6 +37,11 @@
     "views": {
       "boxlite-explorer": [
         {
+          "id": "boxlite.accountView",
+          "name": "BoxLite Cloud Account",
+          "visibility": "visible"
+        },
+        {
           "id": "boxlite.boxesView",
           "name": "Boxes",
           "visibility": "visible"
@@ -293,6 +298,11 @@
       "view/title": [
         {
           "command": "boxlite.refresh",
+          "when": "view == boxlite.accountView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "boxlite.refresh",
           "when": "view == boxlite.boxesView",
           "group": "navigation@1"
         },
@@ -340,18 +350,28 @@
       "view/item/context": [
         {
           "command": "boxlite.createBox",
-          "when": "view == boxlite.boxesView && viewItem == 'account-signed-in'",
+          "when": "view == boxlite.accountView && viewItem == 'account-signed-in'",
           "group": "account@1"
         },
         {
           "command": "boxlite.createBoxWithOptions",
-          "when": "view == boxlite.boxesView && viewItem == 'account-signed-in'",
+          "when": "view == boxlite.accountView && viewItem == 'account-signed-in'",
           "group": "account@2"
         },
         {
-          "command": "boxlite.signOut",
-          "when": "view == boxlite.boxesView && viewItem == 'account-signed-in'",
+          "command": "boxlite.addImage",
+          "when": "view == boxlite.accountView && viewItem == 'account-signed-in'",
           "group": "account@3"
+        },
+        {
+          "command": "boxlite.createVolume",
+          "when": "view == boxlite.accountView && viewItem == 'account-signed-in'",
+          "group": "account@4"
+        },
+        {
+          "command": "boxlite.signOut",
+          "when": "view == boxlite.accountView && viewItem == 'account-signed-in'",
+          "group": "account@5"
         },
         {
           "command": "boxlite.openUrl",
@@ -434,16 +454,6 @@
           "group": "9_danger@1"
         },
         {
-          "command": "boxlite.addImage",
-          "when": "view == boxlite.imagesView && viewItem == 'account-signed-in'",
-          "group": "account@1"
-        },
-        {
-          "command": "boxlite.signOut",
-          "when": "view == boxlite.imagesView && viewItem == 'account-signed-in'",
-          "group": "account@2"
-        },
-        {
           "command": "boxlite.createBoxFromImage",
           "when": "view == boxlite.imagesView && viewItem =~ /^image-item.*/",
           "group": "inline@1"
@@ -477,16 +487,6 @@
           "command": "boxlite.removeImage",
           "when": "view == boxlite.imagesView && viewItem =~ /.*image-custom.*/",
           "group": "9_danger@1"
-        },
-        {
-          "command": "boxlite.createVolume",
-          "when": "view == boxlite.volumesView && viewItem == 'account-signed-in'",
-          "group": "account@1"
-        },
-        {
-          "command": "boxlite.signOut",
-          "when": "view == boxlite.volumesView && viewItem == 'account-signed-in'",
-          "group": "account@2"
         },
         {
           "command": "boxlite.addVolumeToBox",

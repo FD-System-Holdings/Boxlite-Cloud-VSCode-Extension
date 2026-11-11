@@ -5,6 +5,7 @@ import { BoxLiteBridgeClient } from './bridge/client';
 import { BoxesTreeDataProvider } from './tree/boxesProvider';
 import { VolumesTreeDataProvider } from './tree/volumesProvider';
 import { ImagesTreeDataProvider } from './tree/imagesProvider';
+import { AccountTreeDataProvider } from './tree/accountProvider';
 import { BoxLiteDeployer } from './deploy/deployer';
 import { LogStreamManager } from './logs/logStream';
 import { registerCommands } from './commands';
@@ -24,6 +25,12 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const logManager = new LogStreamManager(bridge);
   context.subscriptions.push(logManager);
+
+  const accountProvider = new AccountTreeDataProvider(credentials);
+  const accountTreeView = vscode.window.createTreeView('boxlite.accountView', {
+    treeDataProvider: accountProvider
+  });
+  context.subscriptions.push(accountTreeView);
 
   const treeProvider = new BoxesTreeDataProvider(bridge, credentials, logManager);
   const treeView = vscode.window.createTreeView('boxlite.boxesView', {
@@ -52,6 +59,7 @@ export async function activate(context: vscode.ExtensionContext) {
     logManager,
     outputChannel,
     () => {
+      accountProvider.refresh();
       treeProvider.refresh();
       volumesProvider.refresh();
       imagesProvider.refresh();
@@ -68,7 +76,8 @@ export async function activate(context: vscode.ExtensionContext) {
     deployer,
     logManager,
     volumesProvider,
-    imagesProvider
+    imagesProvider,
+    accountProvider
   );
 
   // Configuration change listener

@@ -6,6 +6,7 @@ import { PythonEnvManager } from '../bridge/env';
 import { BoxesTreeDataProvider } from '../tree/boxesProvider';
 import { VolumesTreeDataProvider } from '../tree/volumesProvider';
 import { ImagesTreeDataProvider } from '../tree/imagesProvider';
+import { AccountTreeDataProvider } from '../tree/accountProvider';
 import { BoxTreeItem, VolumeTreeItem, ImageTreeItem } from '../tree/nodes';
 import { BoxLiteDeployer } from '../deploy/deployer';
 import { scaffoldNewProject } from '../deploy/scaffold';
@@ -42,7 +43,8 @@ export function registerCommands(
   deployer: BoxLiteDeployer,
   logManager: LogStreamManager,
   volumesProvider?: VolumesTreeDataProvider,
-  imagesProvider?: ImagesTreeDataProvider
+  imagesProvider?: ImagesTreeDataProvider,
+  accountProvider?: AccountTreeDataProvider
 ) {
   // 1. Auth commands
   context.subscriptions.push(
@@ -50,6 +52,7 @@ export function registerCommands(
       const key = await credentials.promptForApiKey();
       if (key) {
         bridge.restartBridge();
+        accountProvider?.refresh();
         treeProvider.refresh();
         volumesProvider?.refresh();
         imagesProvider?.refresh();
@@ -67,6 +70,7 @@ export function registerCommands(
       if (confirm === 'Log Out') {
         await credentials.clearApiKey();
         bridge.restartBridge();
+        accountProvider?.refresh();
         treeProvider.refresh();
         volumesProvider?.refresh();
         imagesProvider?.refresh();
@@ -78,6 +82,7 @@ export function registerCommands(
   // 2. Refresh
   context.subscriptions.push(
     vscode.commands.registerCommand('boxlite.refresh', async () => {
+      accountProvider?.refresh();
       treeProvider.refresh();
       volumesProvider?.refresh();
       imagesProvider?.refresh();
