@@ -308,6 +308,7 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
       }
       this.process = null;
     }
+    this.rejectAllPending(new Error('Bridge restarted'));
   }
 
   public dispose() {

@@ -66,6 +66,18 @@
         "icon": "$(key)"
       },
       {
+        "command": "boxlite.selectApiKey",
+        "title": "Select Active API Key...",
+        "category": "BoxLite",
+        "icon": "$(key)"
+      },
+      {
+        "command": "boxlite.removeApiKey",
+        "title": "Remove API Key",
+        "category": "BoxLite",
+        "icon": "$(trash)"
+      },
+      {
         "command": "boxlite.signOut",
         "title": "Log Out",
         "category": "BoxLite",
@@ -297,9 +309,14 @@
     "menus": {
       "view/title": [
         {
-          "command": "boxlite.refresh",
+          "command": "boxlite.setApiKey",
           "when": "view == boxlite.accountView",
           "group": "navigation@1"
+        },
+        {
+          "command": "boxlite.refresh",
+          "when": "view == boxlite.accountView",
+          "group": "navigation@2"
         },
         {
           "command": "boxlite.refresh",
@@ -372,6 +389,16 @@
           "command": "boxlite.signOut",
           "when": "view == boxlite.accountView && viewItem == 'account-signed-in'",
           "group": "account@5"
+        },
+        {
+          "command": "boxlite.selectApiKey",
+          "when": "view == boxlite.accountView && viewItem == 'apikey'",
+          "group": "1_select@1"
+        },
+        {
+          "command": "boxlite.removeApiKey",
+          "when": "view == boxlite.accountView && (viewItem == 'apikey' || viewItem == 'apikey-active')",
+          "group": "9_danger@1"
         },
         {
           "command": "boxlite.openUrl",

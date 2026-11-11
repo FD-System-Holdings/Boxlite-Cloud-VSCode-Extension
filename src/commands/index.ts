@@ -7,7 +7,7 @@ import { BoxesTreeDataProvider } from '../tree/boxesProvider';
 import { VolumesTreeDataProvider } from '../tree/volumesProvider';
 import { ImagesTreeDataProvider } from '../tree/imagesProvider';
 import { AccountTreeDataProvider } from '../tree/accountProvider';
-import { BoxTreeItem, VolumeTreeItem, ImageTreeItem } from '../tree/nodes';
+import { BoxTreeItem, VolumeTreeItem, ImageTreeItem, ApiKeyTreeItem } from '../tree/nodes';
 import { BoxLiteDeployer } from '../deploy/deployer';
 import { scaffoldNewProject } from '../deploy/scaffold';
 import { ProjectManager } from '../deploy/project';
@@ -46,16 +46,103 @@ export function registerCommands(
   imagesProvider?: ImagesTreeDataProvider,
   accountProvider?: AccountTreeDataProvider
 ) {
+  const refreshAllViews = () => {
+    bridge.restartBridge();
+    accountProvider?.refresh();
+    treeProvider.refresh();
+    volumesProvider?.refresh();
+    imagesProvider?.refresh();
+  };
+
   // 1. Auth commands
   context.subscriptions.push(
     vscode.commands.registerCommand('boxlite.setApiKey', async () => {
       const key = await credentials.promptForApiKey();
       if (key) {
-        bridge.restartBridge();
-        accountProvider?.refresh();
-        treeProvider.refresh();
-        volumesProvider?.refresh();
-        imagesProvider?.refresh();
+        refreshAllViews();
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.selectApiKey', async (target?: string | ApiKeyTreeItem) => {
+      let keyId: string | undefined;
+      if (typeof target === 'string') {
+        keyId = target;
+      } else if (target && (target as any).keyId) {
+        keyId = (target as any).keyId;
+      }
+
+      if (!keyId) {
+        const keys = await credentials.listKeys();
+        if (keys.length === 0) {
+          vscode.window.showInformationMessage('No BoxLite API keys found. Link an API key first.');
+          return;
+        }
+        const picked = await vscode.window.showQuickPick(
+          keys.map((k) => ({
+            label: `${k.active ? '$(check) ' : ''}${k.name}`,
+            description: k.active ? 'Active' : '',
+            id: k.id
+          })),
+          { placeHolder: 'Select an API key to activate' }
+        );
+        if (!picked) {
+          return;
+        }
+        keyId = picked.id;
+      }
+
+      if (keyId === 'env') {
+        refreshAllViews();
+        return;
+      }
+
+      const success = await credentials.selectKey(keyId);
+      if (success) {
+        refreshAllViews();
+        const active = await credentials.getActiveKey();
+        vscode.window.showInformationMessage(`Switched active BoxLite API key to "${active?.name || keyId}".`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.removeApiKey', async (target?: ApiKeyTreeItem) => {
+      let keyId = target?.keyId;
+      let keyName = target?.keyName;
+
+      if (!keyId) {
+        const keys = await credentials.listKeys();
+        const removable = keys.filter((k) => !k.isEnv);
+        if (removable.length === 0) {
+          vscode.window.showInformationMessage('No removable BoxLite API keys found.');
+          return;
+        }
+        const picked = await vscode.window.showQuickPick(
+          removable.map((k) => ({
+            label: k.name,
+            description: k.active ? 'Active' : '',
+            id: k.id
+          })),
+          { placeHolder: 'Select an API key to remove' }
+        );
+        if (!picked) {
+          return;
+        }
+        keyId = picked.id;
+        keyName = picked.label;
+      }
+
+      const confirm = await vscode.window.showWarningMessage(
+        `Are you sure you want to remove the API key "${keyName || keyId}"?`,
+        'Remove',
+        'Cancel'
+      );
+      if (confirm === 'Remove') {
+        await credentials.removeKey(keyId);
+        refreshAllViews();
+        vscode.window.showInformationMessage(`Removed BoxLite API key "${keyName || keyId}".`);
       }
     })
   );
@@ -69,11 +156,7 @@ export function registerCommands(
       );
       if (confirm === 'Log Out') {
         await credentials.clearApiKey();
-        bridge.restartBridge();
-        accountProvider?.refresh();
-        treeProvider.refresh();
-        volumesProvider?.refresh();
-        imagesProvider?.refresh();
+        refreshAllViews();
         vscode.window.showInformationMessage('Logged out of BoxLite Cloud.');
       }
     })

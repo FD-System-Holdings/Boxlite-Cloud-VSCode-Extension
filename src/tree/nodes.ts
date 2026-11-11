@@ -11,14 +11,19 @@ export abstract class BoxLiteTreeItem extends vscode.TreeItem {
 }
 
 export class AccountTreeItem extends BoxLiteTreeItem {
-  constructor(public readonly restUrl: string, public readonly apiKey?: string) {
+  constructor(
+    public readonly restUrl: string,
+    public readonly apiKey?: string,
+    public readonly activeKeyName?: string
+  ) {
     super(
       apiKey ? 'BoxLite Cloud Account' : 'BoxLite Cloud (Not Signed In)',
-      vscode.TreeItemCollapsibleState.None
+      apiKey ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None
     );
 
+    const displayName = activeKeyName || (apiKey ? 'Connected' : 'Click to Sign In');
     this.description = apiKey
-      ? `Connected · ${restUrl.replace(/^https?:\/\//, '')}`
+      ? `${displayName} · ${restUrl.replace(/^https?:\/\//, '')}`
       : 'Click to Sign In';
     this.iconPath = new vscode.ThemeIcon(apiKey ? 'account' : 'sign-in');
     // shortcut: account context menu targets signed-in accounts; add signed-out actions if offline configuration is needed
@@ -30,6 +35,40 @@ export class AccountTreeItem extends BoxLiteTreeItem {
         title: 'Sign In / Set API Key'
       };
     }
+  }
+}
+
+export class ApiKeyTreeItem extends BoxLiteTreeItem {
+  constructor(
+    public readonly keyId: string,
+    public readonly keyName: string,
+    public readonly isActive: boolean,
+    public readonly isEnv?: boolean
+  ) {
+    super(keyName, vscode.TreeItemCollapsibleState.None);
+
+    this.description = isActive ? 'Active' : '';
+    this.iconPath = new vscode.ThemeIcon(isActive ? 'check' : 'key');
+    this.contextValue = isEnv ? 'apikey-env' : (isActive ? 'apikey-active' : 'apikey');
+    this.tooltip = `API Key: ${keyName}${isActive ? ' (Active)' : ''}${isEnv ? ' (From environment)' : ''}\nClick to switch active API key.`;
+
+    this.command = {
+      command: 'boxlite.selectApiKey',
+      title: 'Select API Key',
+      arguments: [keyId]
+    };
+  }
+}
+
+export class LinkApiKeyActionTreeItem extends BoxLiteTreeItem {
+  constructor() {
+    super('Link new API key...', vscode.TreeItemCollapsibleState.None);
+    this.iconPath = new vscode.ThemeIcon('add');
+    this.contextValue = 'account-link-key';
+    this.command = {
+      command: 'boxlite.setApiKey',
+      title: 'Link API Key'
+    };
   }
 }
 
