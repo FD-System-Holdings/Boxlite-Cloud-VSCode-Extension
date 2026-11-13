@@ -211,6 +211,27 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
         }
       }
 
+      // 3c. Outbound Proxy Secrets
+      if (element.box.secrets && element.box.secrets.length > 0) {
+        for (const s of element.box.secrets) {
+          children.push(
+            new BoxChildTreeItem(
+              `Secret: ${s.name}`,
+              `<BOXLITE_SECRET:${s.name}> → ${(s.hosts || []).join(', ')}`,
+              'shield',
+              {
+                command: 'boxlite.inspectBox',
+                title: 'Inspect Box Secrets',
+                arguments: [element]
+              },
+              vscode.TreeItemCollapsibleState.None,
+              'box-secret-item',
+              element.box.id
+            )
+          );
+        }
+      }
+
       // 4. Application Logs
       const isStreaming = this.logManager?.isStreaming(element.box.id);
       children.push(

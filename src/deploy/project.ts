@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { SecretConfigSpec } from '../bridge/protocol';
+import { formatSecretPlaceholder } from '../util/validation';
 
 export interface VolumeMountConfig {
   managed_volume: string;
@@ -25,6 +27,7 @@ export interface BoxliteProjectConfig {
     };
   };
   volumes?: VolumeMountConfig[];
+  secrets?: SecretConfigSpec[];
   env?: string[] | Record<string, string>;
   persistent?: boolean;
   autoStop?: number;
@@ -52,6 +55,7 @@ export const DEFAULT_CONFIG: BoxliteProjectConfig = {
     }
   },
   volumes: [],
+  secrets: [],
   persistent: true,
   autoStop: 0,
   autoDelete: 0,
@@ -90,6 +94,14 @@ export class ProjectManager {
         ...DEFAULT_CONFIG,
         ...parsed,
         volumes: parsed.volumes || DEFAULT_CONFIG.volumes || [],
+        secrets: Array.isArray(parsed.secrets)
+          ? parsed.secrets.map((s: any) => ({
+              name: s.name,
+              hosts: Array.isArray(s.hosts) ? s.hosts : [],
+              headers: s.headers && typeof s.headers === 'object' ? { ...s.headers } : {},
+              ...(s.envVar ? { envVar: s.envVar } : {})
+            }))
+          : DEFAULT_CONFIG.secrets || [],
         network: {
           inbound: parsed.network?.inbound || DEFAULT_CONFIG.network?.inbound,
           outbound: {
@@ -125,6 +137,58 @@ export class ProjectManager {
       fs.writeFileSync(fileUri.fsPath, JSON.stringify(json, null, 2), 'utf-8');
     } catch (e: any) {
       console.error('Failed to update volumes in boxlite.json', e);
+      throw e;
+    }
+  }
+
+  public static async addSecretConfig(
+    fileUri: vscode.Uri,
+    secret: SecretConfigSpec
+  ): Promise<void> {
+    try {
+      const content = fs.readFileSync(fileUri.fsPath, 'utf-8');
+      const json = JSON.parse(content);
+      const secrets: SecretConfigSpec[] = Array.isArray(json.secrets) ? json.secrets : [];
+
+      // Never persist raw secret values to boxlite.json
+      const sanitized: SecretConfigSpec = {
+        name: secret.name,
+        hosts: [...(secret.hosts || [])],
+        headers: { ...(secret.headers || {}) }
+      };
+      if (secret.envVar && secret.envVar.trim()) {
+        sanitized.envVar = secret.envVar.trim();
+      }
+
+      const existingIdx = secrets.findIndex(
+        (s) => s.name.trim().toLowerCase() === sanitized.name.trim().toLowerCase()
+      );
+      if (existingIdx >= 0) {
+        secrets[existingIdx] = sanitized;
+      } else {
+        secrets.push(sanitized);
+      }
+      json.secrets = secrets;
+
+      if (sanitized.envVar) {
+        if (!json.env || Array.isArray(json.env)) {
+          const envMap: Record<string, string> = {};
+          if (Array.isArray(json.env)) {
+            for (const entry of json.env) {
+              const idx = String(entry).indexOf('=');
+              if (idx > 0) {
+                envMap[String(entry).substring(0, idx)] = String(entry).substring(idx + 1);
+              }
+            }
+          }
+          json.env = envMap;
+        }
+        json.env[sanitized.envVar] = formatSecretPlaceholder(sanitized.name);
+      }
+
+      fs.writeFileSync(fileUri.fsPath, JSON.stringify(json, null, 2), 'utf-8');
+    } catch (e: any) {
+      console.error('Failed to update secrets in boxlite.json', e);
       throw e;
     }
   }

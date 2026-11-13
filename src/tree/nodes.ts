@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { BoxListItem, TunnelInfo, VolumeItem, ImageItem, ImageUsage, CheckpointItem } from '../bridge/protocol';
+import { BoxListItem, TunnelInfo, VolumeItem, ImageItem, ImageUsage, CheckpointItem, SecretConfigSpec } from '../bridge/protocol';
 
 export abstract class BoxLiteTreeItem extends vscode.TreeItem {
   constructor(
@@ -368,6 +368,72 @@ export class CheckpointChildTreeItem extends BoxLiteTreeItem {
     collapsible: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
     contextValue?: string,
     public readonly checkpointKey?: string,
+    tooltip?: string
+  ) {
+    super(label, collapsible);
+    this.description = description;
+    this.tooltip = tooltip || description;
+    if (icon) {
+      this.iconPath = new vscode.ThemeIcon(icon);
+    }
+    this.command = command;
+    this.contextValue = contextValue;
+  }
+}
+
+export interface SecretTreeItemData extends SecretConfigSpec {
+  hasValue?: boolean;
+  usedByBoxes?: string[];
+  source?: 'workstation' | 'project' | 'box' | 'merged';
+}
+
+export class SecretTreeItem extends BoxLiteTreeItem {
+  public readonly secret: SecretTreeItemData;
+
+  constructor(secret: SecretTreeItemData) {
+    super(secret.name, vscode.TreeItemCollapsibleState.Collapsed);
+    this.secret = secret;
+
+    const placeholder = `<BOXLITE_SECRET:${secret.name}>`;
+    const hostsStr = (secret.hosts || []).join(', ') || 'no hosts';
+    const hasValue = secret.hasValue !== false;
+    this.description = `${placeholder} · ${hostsStr}${hasValue ? '' : ' · (value not set)'}`;
+
+    this.iconPath = new vscode.ThemeIcon(
+      hasValue ? 'shield' : 'warning',
+      hasValue
+        ? new vscode.ThemeColor('symbolIcon.fieldForeground')
+        : new vscode.ThemeColor('testing.iconQueued')
+    );
+
+    const headerMappings = Object.entries(secret.headers || {})
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(', ');
+
+    let tooltip = `Secret: ${secret.name}\nPlaceholder (inside box): ${placeholder}\nAllowed Hosts: ${hostsStr}\nHeader Template: ${headerMappings || 'Authorization: Bearer {value}'}`;
+    if (secret.envVar) {
+      tooltip += `\nGuest Env Variable: ${secret.envVar}=${placeholder}`;
+    }
+    if (secret.usedByBoxes && secret.usedByBoxes.length > 0) {
+      tooltip += `\nAttached to Boxes: ${secret.usedByBoxes.join(', ')}`;
+    }
+    tooltip += '\nStatus: ' + (hasValue ? 'Credential stored securely in VS Code SecretStorage' : 'Missing local credential value (set before deploying)');
+    tooltip += '\n\nSecurity boundary: Real value is supplied only via BoxOptions.secrets; outbound proxy injects it only on matching hosts with an existing target header.';
+    this.tooltip = tooltip;
+
+    this.contextValue = `secret-item ${hasValue ? 'secret-ready' : 'secret-missing-value'}`;
+  }
+}
+
+export class SecretChildTreeItem extends BoxLiteTreeItem {
+  constructor(
+    label: string,
+    description?: string,
+    icon?: string,
+    command?: vscode.Command,
+    collapsible: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
+    contextValue?: string,
+    public readonly secretName?: string,
     tooltip?: string
   ) {
     super(label, collapsible);

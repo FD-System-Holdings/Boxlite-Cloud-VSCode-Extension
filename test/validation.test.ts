@@ -10,7 +10,14 @@ import {
   validateRegistryHost,
   validateRepositoryPrefix,
   validateCheckpointName,
-  validateCheckpointBoxOptions
+  validateCheckpointBoxOptions,
+  formatSecretPlaceholder,
+  validateSecretName,
+  validateSecretHost,
+  validateSecretHosts,
+  validateSecretHeaders,
+  validateSecretSpec,
+  validateEnvAgainstSecrets
 } from '../src/util/validation';
 
 describe('Network Allowlist and Policy Validation', () => {
@@ -215,5 +222,89 @@ describe('Image Reference, Alias and Registry Validation', () => {
     const invalid = validateCheckpointBoxOptions('chk_123', true);
     assert.strictEqual(invalid.valid, false);
     assert.ok(invalid.error && invalid.error.length > 0);
+  });
+
+  it('formats and validates outbound proxy secret names and placeholders', () => {
+    assert.strictEqual(formatSecretPlaceholder('openai'), '<BOXLITE_SECRET:openai>');
+    assert.strictEqual(formatSecretPlaceholder('  model_key-1 '), '<BOXLITE_SECRET:model_key-1>');
+
+    assert.strictEqual(validateSecretName('openai').valid, true);
+    assert.strictEqual(validateSecretName('anthropic_prod-2.key').valid, true);
+
+    assert.strictEqual(validateSecretName('').valid, false);
+    assert.strictEqual(validateSecretName('bad name').valid, false);
+    assert.strictEqual(validateSecretName('<BOXLITE_SECRET:openai>').valid, false);
+    assert.strictEqual(validateSecretName('-leading-dash').valid, false);
+    assert.strictEqual(validateSecretName('a'.repeat(65)).valid, false);
+  });
+
+  it('validates secret target hostnames without scheme, path, port, or IP', () => {
+    assert.strictEqual(validateSecretHost('api.openai.com').valid, true);
+    assert.strictEqual(validateSecretHost('*.openai.com').valid, true);
+    assert.strictEqual(validateSecretHosts(['api.openai.com', 'httpbingo.org']).valid, true);
+
+    assert.strictEqual(validateSecretHosts([]).valid, false);
+    assert.strictEqual(validateSecretHost('https://api.openai.com').valid, false);
+    assert.strictEqual(validateSecretHost('api.openai.com/v1').valid, false);
+    assert.strictEqual(validateSecretHost('api.openai.com:443').valid, false);
+    assert.strictEqual(validateSecretHost('1.2.3.4').valid, false);
+  });
+
+  it('validates secret header templates and full secret specs', () => {
+    assert.strictEqual(validateSecretHeaders({ Authorization: 'Bearer {value}' }).valid, true);
+    assert.strictEqual(validateSecretHeaders({ 'x-api-key': '{value}' }).valid, true);
+
+    assert.strictEqual(validateSecretHeaders({}).valid, false);
+    assert.strictEqual(
+      validateSecretHeaders({ Authorization: 'Bearer <BOXLITE_SECRET:openai>' }).valid,
+      false
+    );
+    assert.strictEqual(validateSecretHeaders({ Authorization: 'Bearer literal' }).valid, false);
+
+    assert.strictEqual(
+      validateSecretSpec({
+        name: 'openai',
+        value: 'sk-real-upstream-key',
+        hosts: ['api.openai.com'],
+        headers: { Authorization: 'Bearer {value}' }
+      }).valid,
+      true
+    );
+
+    // Reject placeholder placed inside Secret.value
+    assert.strictEqual(
+      validateSecretSpec({
+        name: 'openai',
+        value: '<BOXLITE_SECRET:openai>',
+        hosts: ['api.openai.com'],
+        headers: { Authorization: 'Bearer {value}' }
+      }).valid,
+      false
+    );
+
+    // Warn when BoxLite Cloud key accidentally supplied as Secret.value
+    const cloudKeyWarn = validateSecretSpec({
+      name: 'openai',
+      value: 'blk_live_abc123',
+      hosts: ['api.openai.com'],
+      headers: { Authorization: 'Bearer {value}' }
+    });
+    assert.strictEqual(cloudKeyWarn.valid, true);
+    assert.ok(cloudKeyWarn.warning && cloudKeyWarn.warning.includes('ApiKeyCredential'));
+  });
+
+  it('rejects raw secret credentials leaked inside BoxOptions.env', () => {
+    const clean = validateEnvAgainstSecrets(
+      { OPENAI_API_KEY: '<BOXLITE_SECRET:openai>' },
+      [{ name: 'openai', value: 'sk-secret-12345' }]
+    );
+    assert.strictEqual(clean.valid, true);
+
+    const leaked = validateEnvAgainstSecrets(
+      { OPENAI_API_KEY: 'sk-secret-12345' },
+      [{ name: 'openai', value: 'sk-secret-12345' }]
+    );
+    assert.strictEqual(leaked.valid, false);
+    assert.ok(leaked.error?.includes('<BOXLITE_SECRET:openai>'));
   });
 });

@@ -37,4 +37,31 @@ describe('Error Diagnostics (§5 Table Mapping)', () => {
     assert.strictEqual(diag.summary.includes('400'), true);
     assert.strictEqual(diag.checklist.some((item) => item.includes('auto_remove')), true);
   });
+
+  it('should diagnose proxy TLS CA certificate verification failures', () => {
+    const diag = diagnoseError('SSL: CERTIFICATE_VERIFY_FAILED against ca-certificates.crt');
+    assert.strictEqual(diag.summary.includes('TLS Certificate Verification Failed'), true);
+    assert.strictEqual(
+      diag.checklist.some((item) => item.includes('/etc/ssl/certs/ca-certificates.crt')),
+      true
+    );
+  });
+
+  it('should diagnose missing headers mapping on Secret', () => {
+    const diag = diagnoseError('Secret headers mapping is missing');
+    assert.strictEqual(diag.summary.includes('Missing Required Headers Mapping'), true);
+    assert.strictEqual(
+      diag.checklist.some((item) => item.includes('<BOXLITE_SECRET:name>')),
+      true
+    );
+  });
+
+  it('should diagnose outbound secret proxy injection failures', () => {
+    const diag = diagnoseError('Outbound BOXLITE_SECRET injection failed for target hostname');
+    assert.strictEqual(diag.summary.includes('Secret Proxy Injection Diagnosis'), true);
+    assert.strictEqual(
+      diag.checklist.some((item) => item.includes('Secret.hosts')),
+      true
+    );
+  });
 });

@@ -293,3 +293,197 @@ export function validateCheckpointBoxOptions(
   }
   return { valid: true };
 }
+
+export function formatSecretPlaceholder(name: string): string {
+  return `<BOXLITE_SECRET:${name.trim()}>`;
+}
+
+export function validateSecretName(name: string): { valid: boolean; error?: string } {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return { valid: false, error: 'Secret name cannot be empty.' };
+  }
+  if (trimmed.length > 64) {
+    return { valid: false, error: 'Secret name cannot exceed 64 characters.' };
+  }
+  if (/[<>:\s]/.test(trimmed)) {
+    return {
+      valid: false,
+      error: 'Secret name must not contain whitespace, "<", ">", or ":" characters.'
+    };
+  }
+  const nameRegex = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+  if (!nameRegex.test(trimmed)) {
+    return {
+      valid: false,
+      error:
+        'Secret name must start with a letter or digit and contain only letters, digits, underscores (_), dots (.), or hyphens (-).'
+    };
+  }
+  return { valid: true };
+}
+
+export function validateSecretHost(host: string): { valid: boolean; error?: string } {
+  const trimmed = host.trim();
+  if (!trimmed) {
+    return { valid: false, error: 'Destination host cannot be empty.' };
+  }
+  if (/\s/.test(trimmed)) {
+    return { valid: false, error: `Invalid secret host "${trimmed}": Whitespace is not allowed.` };
+  }
+  if (trimmed.includes('://')) {
+    return {
+      valid: false,
+      error: `Invalid secret host "${trimmed}": Specify only the hostname without "https://" or a URL scheme (docs.boxlite.ai/cloud/secrets).`
+    };
+  }
+  if (trimmed.includes('/')) {
+    return {
+      valid: false,
+      error: `Invalid secret host "${trimmed}": Specify only the hostname without a path or CIDR suffix.`
+    };
+  }
+  if (trimmed.includes(':')) {
+    return {
+      valid: false,
+      error: `Invalid secret host "${trimmed}": Specify only the hostname without a port.`
+    };
+  }
+  const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+  if (ipv4Regex.test(trimmed)) {
+    return {
+      valid: false,
+      error: `Invalid secret host "${trimmed}": Use a DNS hostname (e.g. api.openai.com), not an IPv4 address.`
+    };
+  }
+  const wildcardHostnameRegex = /^\*\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+  const hostnameRegex = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+  if (wildcardHostnameRegex.test(trimmed) || hostnameRegex.test(trimmed)) {
+    return { valid: true };
+  }
+  return {
+    valid: false,
+    error: `Invalid secret host "${trimmed}": Must be a valid hostname (e.g. api.openai.com or *.example.com).`
+  };
+}
+
+export function validateSecretHosts(hosts: string[]): { valid: boolean; error?: string } {
+  if (!Array.isArray(hosts) || hosts.length === 0) {
+    return {
+      valid: false,
+      error: 'Specify at least one destination hostname (e.g. api.openai.com) for secret injection.'
+    };
+  }
+  for (const h of hosts) {
+    const check = validateSecretHost(h);
+    if (!check.valid) {
+      return check;
+    }
+  }
+  return { valid: true };
+}
+
+export function validateSecretHeaders(headers: Record<string, string>): { valid: boolean; error?: string } {
+  if (!headers || typeof headers !== 'object' || Object.keys(headers).length === 0) {
+    return {
+      valid: false,
+      error: 'Secret requires an explicit headers mapping (e.g. {"Authorization": "Bearer {value}"}).'
+    };
+  }
+
+  const headerNameRegex = /^[A-Za-z0-9-]+$/;
+  for (const [headerName, template] of Object.entries(headers)) {
+    if (!headerName.trim() || !headerNameRegex.test(headerName.trim())) {
+      return {
+        valid: false,
+        error: `Invalid header name "${headerName}". Use standard HTTP header characters (letters, digits, hyphens).`
+      };
+    }
+    if (typeof template !== 'string' || !template.trim()) {
+      return {
+        valid: false,
+        error: `Header template for "${headerName}" cannot be empty.`
+      };
+    }
+    if (template.includes('<BOXLITE_SECRET:')) {
+      return {
+        valid: false,
+        error: `Header template for "${headerName}" must use "{value}" instead of "<BOXLITE_SECRET:...>". Guest requests send "<BOXLITE_SECRET:name>", while Secret.headers uses "{value}".`
+      };
+    }
+    if (!template.includes('{value}')) {
+      return {
+        valid: false,
+        error: `Header template for "${headerName}" must include the "{value}" template variable (e.g. "Bearer {value}" or "{value}").`
+      };
+    }
+  }
+
+  return { valid: true };
+}
+
+export function validateSecretSpec(
+  spec: { name: string; value?: string; hosts: string[]; headers: Record<string, string> },
+  requireValue = true
+): { valid: boolean; error?: string; warning?: string } {
+  const nameCheck = validateSecretName(spec.name || '');
+  if (!nameCheck.valid) {
+    return nameCheck;
+  }
+
+  const hostsCheck = validateSecretHosts(spec.hosts || []);
+  if (!hostsCheck.valid) {
+    return hostsCheck;
+  }
+
+  const headersCheck = validateSecretHeaders(spec.headers || {});
+  if (!headersCheck.valid) {
+    return headersCheck;
+  }
+
+  let warning: string | undefined;
+  const val = spec.value ?? '';
+  if (requireValue) {
+    if (!val.trim()) {
+      return { valid: false, error: 'Secret value cannot be empty.' };
+    }
+    if (val.includes('<BOXLITE_SECRET:')) {
+      return {
+        valid: false,
+        error: 'Do not put a <BOXLITE_SECRET:...> placeholder in Secret.value; supply the real credential here and use the placeholder inside the box.'
+      };
+    }
+  }
+
+  if (val && (val.trim().startsWith('blk_live_') || val.trim().startsWith('bl_live_'))) {
+    warning = 'Value looks like a BoxLite Cloud API key. Use your BoxLite Cloud API key for ApiKeyCredential and the upstream provider key for Secret.value (docs.boxlite.ai/cloud/secrets).';
+  }
+
+  return { valid: true, warning };
+}
+
+export function validateEnvAgainstSecrets(
+  env: Record<string, string>,
+  secrets: Array<{ name: string; value?: string }>
+): { valid: boolean; error?: string } {
+  if (!env || !secrets || secrets.length === 0) {
+    return { valid: true };
+  }
+
+  for (const secret of secrets) {
+    const rawVal = secret.value?.trim();
+    if (!rawVal) {
+      continue;
+    }
+    for (const [envKey, envVal] of Object.entries(env)) {
+      if (typeof envVal === 'string' && envVal.length > 0 && (envVal === rawVal || envVal.includes(rawVal))) {
+        return {
+          valid: false,
+          error: `Environment variable "${envKey}" contains the raw credential for secret "${secret.name}". Never put real keys in BoxOptions.env; use "${formatSecretPlaceholder(secret.name)}" instead.`
+        };
+      }
+    }
+  }
+
+  return { valid: true };
+}

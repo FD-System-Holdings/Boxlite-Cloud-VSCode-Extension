@@ -4,10 +4,13 @@ import * as fs from 'fs';
 import * as https from 'https';
 import * as http from 'http';
 import { BoxLiteBridgeClient } from '../bridge/client';
+import { SecretSpec } from '../bridge/protocol';
 import { CredentialsManager } from '../auth/credentials';
+import { SecretsManager } from '../auth/secretsStore';
 import { ProjectManager, buildSupervisorEntrypoint } from './project';
 import { LogStreamManager } from '../logs/logStream';
 import { diagnoseError } from '../util/diagnosis';
+import { formatSecretPlaceholder, validateEnvAgainstSecrets } from '../util/validation';
 
 export class BoxLiteDeployer {
   constructor(
@@ -15,7 +18,8 @@ export class BoxLiteDeployer {
     private credentials: CredentialsManager,
     private logManager: LogStreamManager,
     private outputChannel: vscode.OutputChannel,
-    private onDeploySuccess?: () => void
+    private onDeploySuccess?: () => void,
+    private secretsManager?: SecretsManager
   ) {}
 
   public async deployWorkspace(targetBoxId?: string): Promise<void> {
@@ -93,12 +97,79 @@ export class BoxLiteDeployer {
               }
             }
 
+            // Resolve Secrets proxy injection rules from workstation SecretStorage
+            let resolvedSecrets: SecretSpec[] | undefined;
+            const envMap: Record<string, string> = {};
+            if (config.env) {
+              if (Array.isArray(config.env)) {
+                for (const entry of config.env) {
+                  const idx = String(entry).indexOf('=');
+                  if (idx > 0) {
+                    envMap[String(entry).substring(0, idx)] = String(entry).substring(idx + 1);
+                  }
+                }
+              } else {
+                Object.assign(envMap, config.env);
+              }
+            }
+
+            if (config.secrets && config.secrets.length > 0) {
+              const resolvedList: SecretSpec[] = [];
+              for (const s of config.secrets) {
+                let secretVal: string | undefined;
+                if (this.secretsManager) {
+                  const stored = await this.secretsManager.getSecret(s.name);
+                  secretVal = stored?.value;
+                }
+                if (!secretVal) {
+                  const prompted = await vscode.window.showInputBox({
+                    title: `BoxLite Secret Credential: ${s.name}`,
+                    prompt: `Enter credential value for secret "${s.name}" (hosts: ${(s.hosts || []).join(', ')})`,
+                    password: true,
+                    ignoreFocusOut: true,
+                    validateInput: (val) => (!val || !val.trim() ? 'Secret value cannot be empty.' : null)
+                  });
+                  if (!prompted) {
+                    throw new Error(`Deployment aborted: credential value for secret "${s.name}" is required.`);
+                  }
+                  secretVal = prompted.trim();
+                  if (this.secretsManager) {
+                    await this.secretsManager.saveSecret({
+                      name: s.name,
+                      value: secretVal,
+                      hosts: s.hosts || [],
+                      headers: s.headers || { Authorization: 'Bearer {value}' },
+                      envVar: s.envVar
+                    });
+                  }
+                }
+                resolvedList.push({
+                  name: s.name,
+                  value: secretVal,
+                  hosts: s.hosts || [],
+                  headers: s.headers || { Authorization: 'Bearer {value}' }
+                });
+                if (s.envVar && !envMap[s.envVar]) {
+                  envMap[s.envVar] = formatSecretPlaceholder(s.name);
+                }
+                this.outputChannel.appendLine(
+                  `[deploy] Configuring Secret '${s.name}' (placeholder ${formatSecretPlaceholder(s.name)}) for hosts: ${(s.hosts || []).join(', ')}`
+                );
+              }
+              const envCheck = validateEnvAgainstSecrets(envMap, resolvedList);
+              if (!envCheck.valid) {
+                throw new Error(envCheck.error || 'Environment contains raw secret value.');
+              }
+              resolvedSecrets = resolvedList;
+            }
+
             const created = await this.bridge.createBox({
               name: boxName,
               image: config.image || 'python',
               autoRemove: false,
               autoStop: config.autoStop ?? 0,
               entrypoint: supervisor,
+              env: Object.keys(envMap).length > 0 ? envMap : undefined,
               network: {
                 inbound: { mode: config.network?.inbound || 'enabled' },
                 outbound: {
@@ -106,7 +177,8 @@ export class BoxLiteDeployer {
                   allow_net: config.network?.outbound?.allow_net || []
                 }
               },
-              volumes: config.volumes && config.volumes.length > 0 ? config.volumes : undefined
+              volumes: config.volumes && config.volumes.length > 0 ? config.volumes : undefined,
+              secrets: resolvedSecrets
             });
 
             boxId = created.boxId;

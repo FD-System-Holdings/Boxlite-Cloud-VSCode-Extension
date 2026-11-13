@@ -19,7 +19,9 @@ import {
   CreateImageAliasArgs,
   DeleteImageAliasArgs,
   CheckpointItem,
-  CreateCheckpointArgs
+  CreateCheckpointArgs,
+  VerifySecretInjectionArgs,
+  VerifySecretInjectionResult
 } from './protocol';
 import { CredentialsManager } from '../auth/credentials';
 import { PythonEnvManager } from './env';
@@ -325,6 +327,13 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
       { checkpointKey, force },
       30000
     );
+  }
+
+  // Secret Injection Verification
+  public async verifySecretInjection(
+    args: VerifySecretInjectionArgs = {}
+  ): Promise<VerifySecretInjectionResult> {
+    return this.sendRequest<VerifySecretInjectionResult>('verify_secret_injection', args, 120000);
   }
 
   public restartBridge() {

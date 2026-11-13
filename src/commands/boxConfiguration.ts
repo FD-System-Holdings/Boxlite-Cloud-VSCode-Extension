@@ -1,9 +1,19 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { CreateBoxArgs, VolumeMountSpec } from '../bridge/protocol';
+import { CreateBoxArgs, SecretSpec, VolumeMountSpec } from '../bridge/protocol';
+import { SecretsManager } from '../auth/secretsStore';
 import { buildSupervisorEntrypoint, BoxliteProjectConfig } from '../deploy/project';
-import { validateAllowlistRule, validateNetworkPolicy } from '../util/validation';
+import {
+  formatSecretPlaceholder,
+  validateAllowlistRule,
+  validateEnvAgainstSecrets,
+  validateNetworkPolicy,
+  validateSecretHeaders,
+  validateSecretHosts,
+  validateSecretName,
+  validateSecretSpec
+} from '../util/validation';
 
 export type SizingPreset = 'small' | 'medium' | 'large' | 'custom';
 export type EntrypointPreset = 'supervisor' | 'keepalive' | 'default' | 'custom';
@@ -27,6 +37,7 @@ export interface BoxConfiguration {
   env: Record<string, string>;
   defaultPort: number;
   volumes?: VolumeMountSpec[];
+  secrets?: SecretSpec[];
 }
 
 export interface BoxTemplate {
@@ -200,6 +211,28 @@ export const BOX_TEMPLATES: BoxTemplate[] = [
       entrypointPreset: 'keepalive',
       defaultPort: 8080
     }
+  },
+  {
+    id: 'llm-secret-box',
+    label: '$(shield) LLM / API Agent with Secret Proxy Injection (docs.boxlite.ai/cloud/secrets)',
+    description: 'Calls OpenAI/HTTPS APIs with <BOXLITE_SECRET:model> placeholder injection',
+    detail: 'image: python · 2 vCPU · 4 GB RAM · Restricted/Outbound enabled · Proxy Secret placeholder env',
+    config: {
+      image: 'python',
+      sizingPreset: 'medium',
+      cpus: 2,
+      memoryMib: 4096,
+      diskSizeGb: 20,
+      inboundMode: 'disabled',
+      outboundMode: 'enabled',
+      allowNet: ['api.openai.com'],
+      autoStop: 900,
+      autoDelete: 0,
+      autoResume: false,
+      entrypointPreset: 'keepalive',
+      env: { OPENAI_API_KEY: '<BOXLITE_SECRET:model>' },
+      defaultPort: 8080
+    }
   }
 ];
 
@@ -237,7 +270,8 @@ export function getDefaultBoxConfiguration(): BoxConfiguration {
     entrypointPreset: 'supervisor',
     customStartCommand: 'python3 -u server.py',
     env: {},
-    defaultPort
+    defaultPort,
+    secrets: []
   };
 }
 
@@ -296,7 +330,8 @@ export function convertBoxConfigToCreateArgs(config: BoxConfiguration): CreateBo
         allow_net: config.outboundMode === 'enabled' ? config.allowNet : []
       }
     },
-    volumes: config.volumes && config.volumes.length > 0 ? config.volumes : undefined
+    volumes: config.volumes && config.volumes.length > 0 ? config.volumes : undefined,
+    secrets: config.secrets && config.secrets.length > 0 ? config.secrets : undefined
   };
 }
 
@@ -305,7 +340,8 @@ export function convertBoxConfigToCreateArgs(config: BoxConfiguration): CreateBo
  * Presents a list of options for possible configuration of the box when creating a new box.
  */
 export async function showBoxConfigurationWizard(
-  initialConfig?: Partial<BoxConfiguration>
+  initialConfig?: Partial<BoxConfiguration>,
+  secretsManager?: SecretsManager
 ): Promise<CreateBoxArgs | undefined> {
   const current: BoxConfiguration = {
     ...getDefaultBoxConfiguration(),
@@ -358,6 +394,12 @@ export async function showBoxConfigurationWizard(
       envKeys.length === 0
         ? 'None configured'
         : `${envKeys.length} variable${envKeys.length > 1 ? 's' : ''} (${envKeys.slice(0, 3).join(', ')}${envKeys.length > 3 ? '...' : ''})`;
+
+    const configuredSecrets = current.secrets || [];
+    const secretsLabel =
+      configuredSecrets.length === 0
+        ? 'None configured'
+        : `${configuredSecrets.length} secret${configuredSecrets.length > 1 ? 's' : ''} (${configuredSecrets.map((s) => s.name).join(', ')})`;
 
     const items: (vscode.QuickPickItem & { action: string })[] = [
       {
@@ -427,6 +469,12 @@ export async function showBoxConfigurationWizard(
         action: 'env'
       },
       {
+        label: '$(shield) Outbound Proxy Secrets',
+        description: secretsLabel,
+        detail: 'Inject real credentials into HTTPS headers at outbound proxy without exposing keys inside box',
+        action: 'secrets'
+      },
+      {
         label: '$(plug) Default Service Port',
         description: `${current.defaultPort}`,
         detail: 'Initial application server port for declaring web tunnels',
@@ -472,6 +520,18 @@ export async function showBoxConfigurationWizard(
         vscode.window.showErrorMessage(`Invalid network policy: ${netRes.errors.join('; ')}`);
         continue;
       }
+      for (const s of current.secrets || []) {
+        const sCheck = validateSecretSpec(s, true);
+        if (!sCheck.valid) {
+          vscode.window.showErrorMessage(`Invalid secret "${s.name}": ${sCheck.error}`);
+          continue;
+        }
+      }
+      const envSecretCheck = validateEnvAgainstSecrets(current.env, current.secrets || []);
+      if (!envSecretCheck.valid) {
+        vscode.window.showErrorMessage(envSecretCheck.error || 'Environment contains raw secret value.');
+        continue;
+      }
       return convertBoxConfigToCreateArgs(current);
     }
 
@@ -505,6 +565,9 @@ export async function showBoxConfigurationWizard(
         break;
       case 'env':
         await promptForEnv(current);
+        break;
+      case 'secrets':
+        await promptForSecrets(current, secretsManager);
         break;
       case 'port':
         await promptForPort(current);
@@ -978,6 +1041,219 @@ async function promptForEnv(current: BoxConfiguration) {
   }
 }
 
+async function promptForSecrets(current: BoxConfiguration, secretsManager?: SecretsManager) {
+  const secretList = current.secrets || [];
+  const items: (vscode.QuickPickItem & { action: string; secretName?: string })[] = [
+    {
+      label: '$(add) Add New Outbound Proxy Secret...',
+      description: 'Configure name, real credential value, allowed hosts, and header template',
+      action: 'add-new'
+    }
+  ];
+
+  if (secretsManager) {
+    const saved = await secretsManager.listSecrets();
+    for (const s of saved) {
+      if (!secretList.some((c) => c.name.toLowerCase() === s.name.toLowerCase())) {
+        items.push({
+          label: `$(shield) Attach Saved Secret: ${s.name}`,
+          description: `${s.hosts.join(', ')} · <BOXLITE_SECRET:${s.name}>`,
+          detail: 'Stored in VS Code SecretStorage',
+          action: 'attach-saved',
+          secretName: s.name
+        });
+      }
+    }
+  }
+
+  for (const s of secretList) {
+    items.push({
+      label: `$(key) ${s.name}`,
+      description: `${s.hosts.join(', ')} · ${Object.entries(s.headers).map(([k, v]) => `${k}: ${v}`).join(', ')}`,
+      detail: `Placeholder inside box: ${formatSecretPlaceholder(s.name)} (Click to remove)`,
+      action: 'remove',
+      secretName: s.name
+    });
+  }
+
+  if (secretList.length > 0) {
+    items.push({
+      label: '$(trash) Clear All Secrets',
+      description: `Remove all ${secretList.length} secrets from this box configuration`,
+      action: 'clear'
+    });
+  }
+
+  const pick = await vscode.window.showQuickPick(items, {
+    title: 'Configure Box Outbound Proxy Secrets',
+    placeHolder: `${secretList.length} secrets attached`
+  });
+
+  if (!pick) {
+    return;
+  }
+
+  if (pick.action === 'attach-saved' && pick.secretName && secretsManager) {
+    const stored = await secretsManager.getSecret(pick.secretName);
+    if (stored) {
+      current.secrets = [
+        ...(current.secrets || []),
+        {
+          name: stored.name,
+          value: stored.value,
+          hosts: stored.hosts,
+          headers: stored.headers
+        }
+      ];
+      if (stored.envVar && !current.env[stored.envVar]) {
+        current.env[stored.envVar] = formatSecretPlaceholder(stored.name);
+      }
+    }
+  } else if (pick.action === 'add-new') {
+    const preset = await vscode.window.showQuickPick(
+      [
+        {
+          label: '$(sparkle) OpenAI / Compatible LLM API',
+          description: 'name: model · host: api.openai.com · Authorization: Bearer {value}',
+          name: 'model',
+          hosts: 'api.openai.com',
+          headerName: 'Authorization',
+          headerTemplate: 'Bearer {value}',
+          envVar: 'OPENAI_API_KEY'
+        },
+        {
+          label: '$(hubot) Anthropic API',
+          description: 'name: anthropic · host: api.anthropic.com · X-Api-Key: {value}',
+          name: 'anthropic',
+          hosts: 'api.anthropic.com',
+          headerName: 'X-Api-Key',
+          headerTemplate: '{value}',
+          envVar: 'ANTHROPIC_API_KEY'
+        },
+        {
+          label: '$(edit) Custom HTTPS API Secret...',
+          description: 'Specify custom secret name, hosts, and header mapping',
+          name: 'api_key',
+          hosts: 'api.example.com',
+          headerName: 'Authorization',
+          headerTemplate: 'Bearer {value}',
+          envVar: ''
+        }
+      ],
+      { title: 'Select Secret Template' }
+    );
+    if (!preset) {
+      return;
+    }
+
+    const name = await vscode.window.showInputBox({
+      prompt: 'Enter secret name (used inside box as <BOXLITE_SECRET:name>)',
+      value: preset.name,
+      validateInput: (v) => {
+        const res = validateSecretName(v);
+        return res.valid ? null : res.error || 'Invalid secret name';
+      }
+    });
+    if (!name) {
+      return;
+    }
+
+    const hostsStr = await vscode.window.showInputBox({
+      prompt: 'Enter comma-separated destination hostnames without https:// or path (e.g. api.openai.com)',
+      value: preset.hosts,
+      validateInput: (v) => {
+        const hosts = v.split(',').map((h) => h.trim()).filter((h) => h.length > 0);
+        const res = validateSecretHosts(hosts);
+        return res.valid ? null : res.error || 'Invalid hostnames';
+      }
+    });
+    if (!hostsStr) {
+      return;
+    }
+    const hosts = hostsStr.split(',').map((h) => h.trim()).filter((h) => h.length > 0);
+
+    const headerName = await vscode.window.showInputBox({
+      prompt: 'Target HTTP request header name (must already be sent by guest code)',
+      value: preset.headerName,
+      validateInput: (v) => {
+        const res = validateSecretHeaders({ [v.trim()]: preset.headerTemplate });
+        return res.valid ? null : res.error || 'Invalid header name';
+      }
+    });
+    if (!headerName) {
+      return;
+    }
+
+    const headerTemplate = await vscode.window.showInputBox({
+      prompt: `Header template for "${headerName.trim()}" using {value} (e.g. "Bearer {value}" or "{value}")`,
+      value: preset.headerTemplate,
+      validateInput: (v) => {
+        const res = validateSecretHeaders({ [headerName.trim()]: v });
+        return res.valid ? null : res.error || 'Invalid header template';
+      }
+    });
+    if (!headerTemplate) {
+      return;
+    }
+
+    const value = await vscode.window.showInputBox({
+      prompt: `Enter real credential value for "${name.trim()}" (stored securely; never written to BoxOptions.env)`,
+      password: true,
+      ignoreFocusOut: true,
+      validateInput: (v) => {
+        if (!v || !v.trim()) {
+          return 'Secret value cannot be empty.';
+        }
+        if (v.includes('<BOXLITE_SECRET:')) {
+          return 'Enter the real credential value here, not the <BOXLITE_SECRET:...> placeholder.';
+        }
+        return null;
+      }
+    });
+    if (!value) {
+      return;
+    }
+
+    const envVar = await vscode.window.showInputBox({
+      prompt: `Optional guest env var to populate with "${formatSecretPlaceholder(name.trim())}" (leave empty to skip)`,
+      value: preset.envVar
+    });
+    if (envVar === undefined) {
+      return;
+    }
+
+    const headers = { [headerName.trim()]: headerTemplate.trim() };
+    const newSecret: SecretSpec = {
+      name: name.trim(),
+      value: value.trim(),
+      hosts,
+      headers
+    };
+
+    const existing = (current.secrets || []).filter(
+      (s) => s.name.toLowerCase() !== newSecret.name.toLowerCase()
+    );
+    current.secrets = [...existing, newSecret];
+
+    if (envVar.trim()) {
+      current.env[envVar.trim()] = formatSecretPlaceholder(newSecret.name);
+    }
+
+    if (secretsManager) {
+      await secretsManager.saveSecret({
+        ...newSecret,
+        envVar: envVar.trim() || undefined
+      });
+    }
+  } else if (pick.action === 'remove' && pick.secretName) {
+    current.secrets = (current.secrets || []).filter(
+      (s) => s.name.toLowerCase() !== pick.secretName!.toLowerCase()
+    );
+  } else if (pick.action === 'clear') {
+    current.secrets = [];
+  }
+}
+
 async function promptForPort(current: BoxConfiguration) {
   const res = await vscode.window.showInputBox({
     prompt: 'Default application service port (1-65535)',
@@ -1055,6 +1331,10 @@ export async function saveConfigToProject(
     memoryMib: config.memoryMib,
     diskSizeGb: config.diskSizeGb,
     volumes: config.volumes || existing.volumes || [],
+    secrets:
+      config.secrets && config.secrets.length > 0
+        ? config.secrets.map((s) => SecretsManager.toConfigSpec(s))
+        : existing.secrets || [],
     env: config.env
   };
 

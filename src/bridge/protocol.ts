@@ -25,6 +25,33 @@ export interface TunnelInfo {
   token?: string;
 }
 
+export interface SecretSpec {
+  name: string;
+  value: string;
+  hosts: string[];
+  headers: Record<string, string>;
+}
+
+export interface SecretConfigSpec {
+  name: string;
+  hosts: string[];
+  headers: Record<string, string>;
+  envVar?: string;
+}
+
+export interface VerifySecretInjectionArgs {
+  image?: string;
+  host?: string;
+}
+
+export interface VerifySecretInjectionResult {
+  boxId: string;
+  envCheckPassed: boolean;
+  headerInjectionPassed: boolean;
+  cleanedUp: boolean;
+  summary: string;
+}
+
 export interface BoxListItem {
   id: string;
   name: string;
@@ -32,6 +59,7 @@ export interface BoxListItem {
   image?: string;
   tunnels?: TunnelInfo[];
   volumes?: VolumeMountSpec[];
+  secrets?: SecretConfigSpec[];
 }
 
 export interface VolumeMountSpec {
@@ -154,6 +182,7 @@ export interface CreateBoxArgs {
   env?: Record<string, string>;
   network?: NetworkConfig;
   volumes?: VolumeMountSpec[];
+  secrets?: SecretSpec[];
 }
 
 export interface ExecArgs {

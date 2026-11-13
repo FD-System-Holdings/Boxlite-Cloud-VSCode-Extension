@@ -1,17 +1,28 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { BoxLiteBridgeClient } from '../bridge/client';
-import { CreateBoxArgs, VolumeItem, CheckpointItem } from '../bridge/protocol';
+import { CreateBoxArgs, VolumeItem, CheckpointItem, SecretConfigSpec, SecretSpec } from '../bridge/protocol';
 import { CredentialsManager } from '../auth/credentials';
+import { SecretsManager } from '../auth/secretsStore';
 import { PythonEnvManager } from '../bridge/env';
 import { BoxesTreeDataProvider } from '../tree/boxesProvider';
 import { VolumesTreeDataProvider } from '../tree/volumesProvider';
 import { ImagesTreeDataProvider } from '../tree/imagesProvider';
 import { CheckpointsTreeDataProvider } from '../tree/checkpointsProvider';
+import { SecretsTreeDataProvider } from '../tree/secretsProvider';
 import { AccountTreeDataProvider } from '../tree/accountProvider';
-import { BoxTreeItem, VolumeTreeItem, ImageTreeItem, CheckpointTreeItem, ApiKeyTreeItem } from '../tree/nodes';
+import {
+  BoxTreeItem,
+  VolumeTreeItem,
+  ImageTreeItem,
+  CheckpointTreeItem,
+  SecretTreeItem,
+  ApiKeyTreeItem
+} from '../tree/nodes';
 import { BoxLiteDeployer } from '../deploy/deployer';
 import { scaffoldNewProject } from '../deploy/scaffold';
-import { ProjectManager } from '../deploy/project';
+import { ProjectManager, DEFAULT_CONFIG } from '../deploy/project';
 import { LogStreamManager } from '../logs/logStream';
 import {
   validateNetworkPolicy,
@@ -25,6 +36,9 @@ import {
   validateRepositoryPrefix,
   validateCheckpointName,
   validateCheckpointBoxOptions,
+  validateSecretName,
+  validateSecretHosts,
+  validateSecretHeaders,
   ALLOWED_REGISTRY_HOSTS
 } from '../util/validation';
 import { diagnoseError } from '../util/diagnosis';
@@ -48,7 +62,9 @@ export function registerCommands(
   volumesProvider?: VolumesTreeDataProvider,
   imagesProvider?: ImagesTreeDataProvider,
   accountProvider?: AccountTreeDataProvider,
-  checkpointsProvider?: CheckpointsTreeDataProvider
+  checkpointsProvider?: CheckpointsTreeDataProvider,
+  secretsProvider?: SecretsTreeDataProvider,
+  secretsManager?: SecretsManager
 ) {
   const refreshAllViews = () => {
     bridge.restartBridge();
@@ -57,6 +73,7 @@ export function registerCommands(
     volumesProvider?.refresh();
     imagesProvider?.refresh();
     checkpointsProvider?.refresh();
+    secretsProvider?.refresh();
   };
 
   // 1. Auth commands
@@ -175,6 +192,7 @@ export function registerCommands(
       volumesProvider?.refresh();
       imagesProvider?.refresh();
       checkpointsProvider?.refresh();
+      secretsProvider?.refresh();
     })
   );
 
@@ -223,6 +241,7 @@ export function registerCommands(
           vscode.window.showInformationMessage(`Box "${boxName}" created (ID: ${res.boxId}).`);
           treeProvider.refresh();
           imagesProvider?.refresh();
+          secretsProvider?.refresh();
         } catch (e: any) {
           const diag = diagnoseError(e.message);
           const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
@@ -235,7 +254,7 @@ export function registerCommands(
   // 6. Create Box with Options (Interactive Configuration Wizard)
   context.subscriptions.push(
     vscode.commands.registerCommand('boxlite.createBoxWithOptions', async () => {
-      const args = await showBoxConfigurationWizard();
+      const args = await showBoxConfigurationWizard(undefined, secretsManager);
       if (args) {
         await performCreateBox(args);
       }
@@ -282,7 +301,7 @@ export function registerCommands(
       }
 
       if (choice.action === 'wizard') {
-        const args = await showBoxConfigurationWizard();
+        const args = await showBoxConfigurationWizard(undefined, secretsManager);
         if (args) {
           await performCreateBox(args);
         }
@@ -317,7 +336,7 @@ export function registerCommands(
           const args = await showBoxConfigurationWizard({
             ...selectedTmpl.template.config,
             name: generateBoxName()
-          });
+          }, secretsManager);
           if (args) {
             await performCreateBox(args);
           }
@@ -1688,6 +1707,438 @@ export function registerCommands(
       );
     })
   );
+
+  // ── Outbound Proxy Secrets ─────────────────────────────────────────────
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.refreshSecrets', () => {
+      secretsProvider?.refresh();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.createSecret', async () => {
+      if (!secretsManager) {
+        vscode.window.showErrorMessage('Secrets manager is not initialized.');
+        return;
+      }
+      const created = await promptSecretDetails(secretsManager);
+      if (!created) {
+        return;
+      }
+      await secretsManager.saveSecret(created);
+      secretsProvider?.refresh();
+      const placeholder = SecretsManager.getPlaceholder(created.name);
+      const action = await vscode.window.showInformationMessage(
+        `Proxy secret "${created.name}" saved in VS Code SecretStorage. Guest placeholder: ${placeholder}`,
+        'Copy Placeholder',
+        'Create Box with Secret'
+      );
+      if (action === 'Copy Placeholder') {
+        await vscode.env.clipboard.writeText(placeholder);
+      } else if (action === 'Create Box with Secret') {
+        await vscode.commands.executeCommand('boxlite.createBoxWithSecret', created.name);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.createBoxWithSecret', async (item?: SecretTreeItem | string) => {
+      if (!(await credentials.getApiKey())) {
+        vscode.window.showWarningMessage('Please sign in to BoxLite Cloud first.');
+        return;
+      }
+      if (!secretsManager) {
+        vscode.window.showErrorMessage('Secrets manager is not initialized.');
+        return;
+      }
+      const secretConfig = await resolveSecret(item, secretsManager);
+      if (!secretConfig) {
+        return;
+      }
+
+      let stored = await secretsManager.getSecret(secretConfig.name);
+      if (!stored) {
+        const value = await vscode.window.showInputBox({
+          prompt: `Enter the secret value for "${secretConfig.name}" (stored in VS Code SecretStorage, never in guest env)`,
+          password: true,
+          ignoreFocusOut: true,
+          validateInput: (val) => (!val || !val.trim() ? 'Secret value is required' : undefined)
+        });
+        if (!value) {
+          return;
+        }
+        stored = {
+          name: secretConfig.name,
+          hosts: secretConfig.hosts,
+          headers: secretConfig.headers,
+          value
+        };
+        await secretsManager.saveSecret(stored);
+        secretsProvider?.refresh();
+      }
+
+      const name = await vscode.window.showInputBox({
+        prompt: 'Box name (optional)',
+        placeHolder: `${secretConfig.name}-box`,
+        ignoreFocusOut: true
+      });
+      if (name === undefined) {
+        return;
+      }
+
+      const imagePick = await vscode.window.showQuickPick(
+        [
+          { label: 'python:alpine', description: 'Lightweight Python 3 image (recommended for SDK/HTTP clients)' },
+          { label: 'node:22-alpine', description: 'Lightweight Node.js 22 image' },
+          { label: 'ubuntu:24.04', description: 'Full Ubuntu base image' },
+          { label: '$(edit) Custom image...', description: 'Enter any catalog or registry image' }
+        ],
+        { placeHolder: 'Select image for the Box' }
+      );
+      if (!imagePick) {
+        return;
+      }
+
+      let image = imagePick.label;
+      if (imagePick.label.startsWith('$(edit)')) {
+        const custom = await vscode.window.showInputBox({
+          prompt: 'Enter Box image name',
+          placeHolder: 'python:alpine',
+          ignoreFocusOut: true,
+          validateInput: (v) => (!v || !v.trim() ? 'Image is required' : undefined)
+        });
+        if (!custom) {
+          return;
+        }
+        image = custom.trim();
+      }
+
+      const placeholder = SecretsManager.getPlaceholder(stored.name);
+      const envVar = await vscode.window.showInputBox({
+        prompt: `Optional env var inside Box set to ${placeholder} (leave blank to skip)`,
+        placeHolder: 'OPENAI_API_KEY',
+        ignoreFocusOut: true
+      });
+      if (envVar === undefined) {
+        return;
+      }
+
+      const createArgs: CreateBoxArgs = {
+        name: name.trim() || undefined,
+        image,
+        network: { outbound: { mode: 'enabled' } },
+        secrets: [stored],
+        env: envVar.trim() ? { [envVar.trim()]: placeholder } : undefined
+      };
+
+      try {
+        const created = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Creating Box with proxy secret "${stored.name}"...`,
+            cancellable: false
+          },
+          async () => bridge.createBox(createArgs)
+        );
+        treeProvider.refresh();
+        secretsProvider?.refresh();
+        const boxLabel = created.name || created.boxId;
+        const action = await vscode.window.showInformationMessage(
+          `Box "${boxLabel}" created with proxy secret "${stored.name}" (${stored.hosts.join(', ')}). Guest placeholder: ${placeholder}`,
+          'Copy Placeholder',
+          'Copy Snippet'
+        );
+        if (action === 'Copy Placeholder') {
+          await vscode.env.clipboard.writeText(placeholder);
+        } else if (action === 'Copy Snippet') {
+          await vscode.commands.executeCommand('boxlite.copySecretSnippet', stored.name);
+        }
+      } catch (e: any) {
+        const diag = diagnoseError(e.message);
+        const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
+        vscode.window.showErrorMessage(`Failed to create Box with secret: ${msg}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.addSecretToProject', async (item?: SecretTreeItem | string) => {
+      if (!secretsManager) {
+        vscode.window.showErrorMessage('Secrets manager is not initialized.');
+        return;
+      }
+      const secret = await resolveSecret(item, secretsManager);
+      if (!secret) {
+        return;
+      }
+      const folders = vscode.workspace.workspaceFolders;
+      if (!folders || folders.length === 0) {
+        vscode.window.showErrorMessage('Open a workspace folder first to add a secret to boxlite.json.');
+        return;
+      }
+
+      const found = await ProjectManager.findProjectConfig();
+      let targetUri = found?.fileUri;
+      if (!targetUri) {
+        const createConfig = await vscode.window.showInformationMessage(
+          'No boxlite.json found in this workspace. Create one with this redacted secret config?',
+          'Create boxlite.json'
+        );
+        if (createConfig !== 'Create boxlite.json') {
+          return;
+        }
+        const configPath = path.join(folders[0].uri.fsPath, 'boxlite.json');
+        fs.writeFileSync(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2), 'utf-8');
+        targetUri = vscode.Uri.file(configPath);
+      }
+
+      try {
+        await ProjectManager.addSecretConfig(targetUri, SecretsManager.toConfigSpec(secret));
+        secretsProvider?.refresh();
+        vscode.window.showInformationMessage(
+          `Added redacted proxy secret "${secret.name}" to boxlite.json (raw secret values are never written to disk).`
+        );
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`Failed to update boxlite.json: ${e.message}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.rotateSecret', async (item?: SecretTreeItem | string) => {
+      if (!secretsManager) {
+        vscode.window.showErrorMessage('Secrets manager is not initialized.');
+        return;
+      }
+      const secret = await resolveSecret(item, secretsManager);
+      if (!secret) {
+        return;
+      }
+
+      const newValue = await vscode.window.showInputBox({
+        prompt: `Enter rotated secret value for "${secret.name}" (new boxes will inject the updated credential)`,
+        password: true,
+        ignoreFocusOut: true,
+        validateInput: (val) => (!val || !val.trim() ? 'New secret value is required' : undefined)
+      });
+      if (!newValue) {
+        return;
+      }
+
+      const updated: SecretSpec = {
+        name: secret.name,
+        hosts: secret.hosts,
+        headers: secret.headers,
+        value: newValue
+      };
+      await secretsManager.saveSecret(updated);
+      secretsProvider?.refresh();
+
+      const nextStep = await vscode.window.showQuickPick(
+        [
+          {
+            label: '$(sync) Replace an existing Box with rotated secret',
+            description: 'Secrets persist on a Box until replaced; create a new Box using the rotated credential',
+            action: 'replace'
+          },
+          {
+            label: '$(check) Done (saved in SecretStorage only)',
+            description: 'Use the updated secret on the next Box creation or deploy',
+            action: 'done'
+          }
+        ],
+        {
+          placeHolder: `Secret "${secret.name}" updated in SecretStorage. Existing Boxes keep their original proxy credential until replaced.`
+        }
+      );
+
+      if (!nextStep || nextStep.action !== 'replace') {
+        vscode.window.showInformationMessage(
+          `Secret "${secret.name}" rotated in SecretStorage. Remember to replace existing Boxes and revoke the old key at the upstream provider.`
+        );
+        return;
+      }
+
+      if (!(await credentials.getApiKey())) {
+        vscode.window.showWarningMessage('Please sign in to BoxLite Cloud first.');
+        return;
+      }
+      const oldBoxId = await resolveBoxId(undefined, bridge);
+      if (!oldBoxId) {
+        return;
+      }
+
+      try {
+        let oldBoxLabel = oldBoxId;
+        const replacement = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Creating replacement Box for "${oldBoxId}"...`,
+            cancellable: false
+          },
+          async () => {
+            const inspected = await bridge.inspectBox(oldBoxId);
+            oldBoxLabel = inspected.name || oldBoxId;
+            const existingSecrets: SecretConfigSpec[] = Array.isArray(inspected.secrets) ? inspected.secrets : [];
+            const otherSpecs = existingSecrets.filter((s: SecretConfigSpec) => s.name !== updated.name);
+            const resolvedOthers = await secretsManager.resolveSecrets(otherSpecs);
+            const mergedSecrets = [updated, ...resolvedOthers.resolved];
+            const replacementName = inspected.name ? `${inspected.name}-rotated` : undefined;
+            return bridge.createBox({
+              name: replacementName,
+              image: inspected.image || 'python:alpine',
+              cpus: inspected.cpus,
+              memoryMib: inspected.memoryMib ?? inspected.memory_mib,
+              diskSizeGb: inspected.diskSizeGb ?? inspected.disk_size_gb,
+              autoStop: inspected.autoStop ?? inspected.auto_stop,
+              autoDelete: inspected.autoDelete ?? inspected.auto_delete,
+              network: inspected.network || { outbound: { mode: 'enabled' } },
+              secrets: mergedSecrets
+            });
+          }
+        );
+
+        treeProvider.refresh();
+        secretsProvider?.refresh();
+        const choice = await vscode.window.showInformationMessage(
+          `Replacement Box "${replacement.name || replacement.boxId}" created with rotated secret "${updated.name}". Remove old Box "${oldBoxLabel}" and revoke the old key at your provider once traffic has moved.`,
+          'Remove Old Box'
+        );
+        if (choice === 'Remove Old Box') {
+          await bridge.removeBox(oldBoxId);
+          treeProvider.refresh();
+          secretsProvider?.refresh();
+          vscode.window.showInformationMessage(`Removed old Box "${oldBoxLabel}".`);
+        }
+      } catch (e: any) {
+        const diag = diagnoseError(e.message);
+        const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
+        vscode.window.showErrorMessage(`Failed to create replacement Box: ${msg}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.copySecretPlaceholder', async (item?: SecretTreeItem | string) => {
+      const secret = await resolveSecret(item, secretsManager);
+      if (!secret) {
+        return;
+      }
+      const placeholder = SecretsManager.getPlaceholder(secret.name);
+      await vscode.env.clipboard.writeText(placeholder);
+      vscode.window.showInformationMessage(`Copied placeholder "${placeholder}" to clipboard.`);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.copySecretHeader', async (item?: SecretTreeItem | string) => {
+      const secret = await resolveSecret(item, secretsManager);
+      if (!secret) {
+        return;
+      }
+      const headerExample = SecretsManager.getGuestHeaderExample(secret);
+      await vscode.env.clipboard.writeText(headerExample);
+      vscode.window.showInformationMessage(`Copied guest header "${headerExample}" to clipboard.`);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.copySecretSnippet', async (item?: SecretTreeItem | string) => {
+      const secret = await resolveSecret(item, secretsManager);
+      if (!secret) {
+        return;
+      }
+      const snippets = buildSecretSnippets(secret);
+      const picked = await vscode.window.showQuickPick(
+        snippets.map((s) => ({
+          label: s.label,
+          description: s.description,
+          code: s.code
+        })),
+        { placeHolder: `Select snippet for secret "${secret.name}"` }
+      );
+      if (!picked) {
+        return;
+      }
+      await vscode.env.clipboard.writeText(picked.code);
+      vscode.window.showInformationMessage(`Copied ${picked.label} snippet to clipboard.`);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.verifySecretInjection', async () => {
+      if (!(await credentials.getApiKey())) {
+        vscode.window.showWarningMessage('Please sign in to BoxLite Cloud first.');
+        return;
+      }
+      const image = await vscode.window.showInputBox({
+        prompt: 'Image to run the fake-token httpbingo.org diagnostic inside (always cleans up temporary Box)',
+        value: 'python:alpine',
+        ignoreFocusOut: true
+      });
+      if (image === undefined) {
+        return;
+      }
+
+      try {
+        const result = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Verifying BoxLite Secret Proxy Injection (fake token via httpbingo.org)...',
+            cancellable: false
+          },
+          async () => bridge.verifySecretInjection({ image: image.trim() || 'python:alpine' })
+        );
+        treeProvider.refresh();
+        secretsProvider?.refresh();
+
+        if (result.headerInjectionPassed && result.envCheckPassed) {
+          vscode.window.showInformationMessage(
+            `Secret injection verified (${result.summary}) — cleanedUp=${result.cleanedUp}`
+          );
+        } else {
+          vscode.window.showWarningMessage(
+            `Secret injection check reported issues (headerInjectionPassed=${result.headerInjectionPassed}, envCheckPassed=${result.envCheckPassed}): ${result.summary}`
+          );
+        }
+      } catch (e: any) {
+        const diag = diagnoseError(e.message);
+        const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
+        vscode.window.showErrorMessage(`Failed to verify secret injection: ${msg}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.deleteSecret', async (item?: SecretTreeItem | string) => {
+      if (!secretsManager) {
+        vscode.window.showErrorMessage('Secrets manager is not initialized.');
+        return;
+      }
+      const secret = await resolveSecret(item, secretsManager);
+      if (!secret) {
+        return;
+      }
+      const confirm = await vscode.window.showWarningMessage(
+        `Delete secret "${secret.name}" from VS Code SecretStorage? Existing Boxes will keep their proxy config until removed or replaced.`,
+        { modal: true },
+        'Delete'
+      );
+      if (confirm !== 'Delete') {
+        return;
+      }
+      const removed = await secretsManager.removeSecret(secret.name);
+      secretsProvider?.refresh();
+      if (removed) {
+        vscode.window.showInformationMessage(`Secret "${secret.name}" deleted from VS Code SecretStorage.`);
+      } else {
+        vscode.window.showInformationMessage(
+          `Secret "${secret.name}" was not stored in VS Code SecretStorage (it may be defined in boxlite.json or on a Box).`
+        );
+      }
+    })
+  );
 }
 
 async function resolveBoxId(item?: any, bridge?: BoxLiteBridgeClient): Promise<string | undefined> {
@@ -1895,4 +2346,238 @@ async function resolveCheckpoint(
     vscode.window.showErrorMessage(`Failed to list checkpoints: ${e.message}`);
     return undefined;
   }
+}
+
+async function promptSecretDetails(secretsManager: SecretsManager): Promise<SecretSpec | undefined> {
+  const name = await vscode.window.showInputBox({
+    prompt: 'Secret name (letters, numbers, underscores, hyphens; placeholder will be <BOXLITE_SECRET:name>)',
+    placeHolder: 'openai',
+    ignoreFocusOut: true,
+    validateInput: (val) => {
+      const res = validateSecretName(val);
+      return res.valid ? undefined : res.error;
+    }
+  });
+  if (!name) {
+    return undefined;
+  }
+
+  const normalizedName = name.trim();
+  const existing = await secretsManager.getSecret(normalizedName);
+  if (existing) {
+    const overwrite = await vscode.window.showWarningMessage(
+      `Secret "${normalizedName}" already exists in SecretStorage. Overwrite it?`,
+      { modal: true },
+      'Overwrite'
+    );
+    if (overwrite !== 'Overwrite') {
+      return undefined;
+    }
+  }
+
+  const hostsInput = await vscode.window.showInputBox({
+    prompt: 'Allowed target hostnames (comma-separated, e.g. api.openai.com, *.openai.com — no https:// or paths)',
+    placeHolder: 'api.openai.com',
+    ignoreFocusOut: true,
+    validateInput: (val) => {
+      const hosts = val
+        .split(',')
+        .map((h) => h.trim())
+        .filter(Boolean);
+      const res = validateSecretHosts(hosts);
+      return res.valid ? undefined : res.error;
+    }
+  });
+  if (!hostsInput) {
+    return undefined;
+  }
+  const hosts = hostsInput
+    .split(',')
+    .map((h) => h.trim())
+    .filter(Boolean);
+
+  const headerPreset = await vscode.window.showQuickPick(
+    [
+      { label: 'Authorization: Bearer {value}', headerName: 'Authorization', headerValue: 'Bearer {value}' },
+      { label: 'x-api-key: {value}', headerName: 'x-api-key', headerValue: '{value}' },
+      { label: 'X-Api-Key: {value}', headerName: 'X-Api-Key', headerValue: '{value}' },
+      { label: '$(edit) Custom header...', headerName: '', headerValue: '' }
+    ],
+    { placeHolder: 'Select outbound header substitution rule ({value} is replaced with real secret at proxy)' }
+  );
+  if (!headerPreset) {
+    return undefined;
+  }
+
+  let headers: Record<string, string>;
+  if (!headerPreset.headerName) {
+    const headerName = await vscode.window.showInputBox({
+      prompt: 'Target HTTP header name',
+      placeHolder: 'Authorization',
+      ignoreFocusOut: true,
+      validateInput: (val) => (!val || !val.trim() ? 'Header name is required' : undefined)
+    });
+    if (!headerName) {
+      return undefined;
+    }
+    const headerTemplate = await vscode.window.showInputBox({
+      prompt: 'Header template (must include {value})',
+      value: 'Bearer {value}',
+      ignoreFocusOut: true,
+      validateInput: (val) => {
+        const res = validateSecretHeaders({ [headerName.trim()]: val });
+        return res.valid ? undefined : res.error;
+      }
+    });
+    if (!headerTemplate) {
+      return undefined;
+    }
+    headers = { [headerName.trim()]: headerTemplate.trim() };
+  } else {
+    headers = { [headerPreset.headerName]: headerPreset.headerValue };
+  }
+
+  const headersErr = validateSecretHeaders(headers);
+  if (!headersErr.valid) {
+    vscode.window.showErrorMessage(headersErr.error || 'Invalid secret header mapping.');
+    return undefined;
+  }
+
+  const value = await vscode.window.showInputBox({
+    prompt: `Secret value for "${normalizedName}" (stored in VS Code SecretStorage, never in boxlite.json or guest env)`,
+    password: true,
+    ignoreFocusOut: true,
+    validateInput: (val) => (!val || !val.trim() ? 'Secret value is required' : undefined)
+  });
+  if (!value) {
+    return undefined;
+  }
+
+  return {
+    name: normalizedName,
+    hosts,
+    headers,
+    value
+  };
+}
+
+async function resolveSecret(
+  item?: SecretTreeItem | string,
+  secretsManager?: SecretsManager
+): Promise<SecretConfigSpec | undefined> {
+  if (item && typeof item === 'object' && 'secret' in item) {
+    return item.secret;
+  }
+  if (!secretsManager) {
+    vscode.window.showErrorMessage('Secrets manager is not initialized.');
+    return undefined;
+  }
+  if (typeof item === 'string' && item.trim()) {
+    const found = await secretsManager.getSecret(item.trim());
+    if (found) {
+      return SecretsManager.toConfigSpec(found);
+    }
+  }
+  const stored = await secretsManager.listSecrets();
+  if (stored.length === 0) {
+    const create = await vscode.window.showInformationMessage(
+      'No proxy secrets stored yet. Create one first?',
+      'Create Secret'
+    );
+    if (create === 'Create Secret') {
+      await vscode.commands.executeCommand('boxlite.createSecret');
+    }
+    return undefined;
+  }
+  const picked = await vscode.window.showQuickPick(
+    stored.map((s) => ({
+      label: s.name,
+      description: `${s.hosts.join(', ')} · ${SecretsManager.getPlaceholder(s.name)}`,
+      secret: SecretsManager.toConfigSpec(s)
+    })),
+    { placeHolder: 'Select an outbound proxy secret' }
+  );
+  return picked?.secret;
+}
+
+function buildSecretSnippets(secret: SecretConfigSpec): Array<{ label: string; description: string; code: string }> {
+  const placeholder = SecretsManager.getPlaceholder(secret.name);
+  const headerEntries = Object.entries(secret.headers);
+  const firstHeader = headerEntries[0] || ['Authorization', 'Bearer {value}'];
+  const guestHeader = SecretsManager.getGuestHeaderExample(secret);
+  const primaryHost = secret.hosts[0] || 'api.example.com';
+  const hostsLiteral = JSON.stringify(secret.hosts);
+  const headersLiteral = JSON.stringify(secret.headers);
+  const envName = `${secret.name.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_API_KEY`;
+
+  return [
+    {
+      label: 'Python SDK (BoxOptions + Secret)',
+      description: 'Create a Box with outbound proxy secret injection',
+      code: [
+        'import os',
+        'from boxlite import BoxOptions, Boxlite, BoxliteRestOptions, NetworkSpec, Secret',
+        '',
+        'rt = Boxlite.rest(BoxliteRestOptions.from_env())',
+        'box = rt.create(BoxOptions(',
+        '    image="python:alpine",',
+        '    network=NetworkSpec(mode="enabled"),',
+        `    env={"${envName}": "${placeholder}"},`,
+        '    secrets=[Secret(',
+        `        name="${secret.name}",`,
+        `        value=os.environ["${envName}"],`,
+        `        hosts=${hostsLiteral},`,
+        `        headers=${headersLiteral},`,
+        '    )],',
+        '))'
+      ].join('\n')
+    },
+    {
+      label: 'TypeScript SDK (@boxlite-ai/boxlite)',
+      description: 'Create a Box with outbound proxy secret injection in JS/TS',
+      code: [
+        'const box = await rt.create({',
+        '  image: "node:22-alpine",',
+        '  network: { mode: "enabled" },',
+        `  env: { ${envName}: "${placeholder}" },`,
+        '  secrets: [{',
+        `    name: "${secret.name}",`,
+        `    value: process.env.${envName}!,`,
+        `    hosts: ${hostsLiteral},`,
+        `    headers: ${headersLiteral},`,
+        '  }],',
+        '});'
+      ].join('\n')
+    },
+    {
+      label: 'Guest Python (urllib + CA cert)',
+      description: 'Send placeholder header from inside the Box using system CA bundle',
+      code: [
+        'import os, ssl, urllib.request',
+        '',
+        'ctx = ssl.create_default_context(cafile="/etc/ssl/certs/ca-certificates.crt")',
+        `token = os.environ.get("${envName}", "${placeholder}")`,
+        `req = urllib.request.Request("https://${primaryHost}/", headers={"${firstHeader[0]}": ${
+          firstHeader[1].includes('Bearer') ? 'f"Bearer {token}"' : 'token'
+        }})`,
+        'with urllib.request.urlopen(req, context=ctx) as resp:',
+        '    print(resp.read().decode())'
+      ].join('\n')
+    },
+    {
+      label: 'Guest Node.js (fetch)',
+      description: 'Send placeholder header from Node.js inside the Box',
+      code: [
+        `const res = await fetch("https://${primaryHost}/", {`,
+        `  headers: { "${firstHeader[0]}": "${firstHeader[1].replace('{value}', placeholder)}" }`,
+        '});',
+        'console.log(await res.text());'
+      ].join('\n')
+    },
+    {
+      label: 'Guest curl',
+      description: 'Send placeholder header with curl inside the Box',
+      code: `curl -sS -H "${guestHeader}" https://${primaryHost}/`
+    }
+  ];
 }

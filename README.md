@@ -185,6 +185,19 @@ When creating a Box via `BoxLite: Create Box with Options...` (or by choosing **
 
 ---
 
+## Outbound Proxy Secrets (`https://docs.boxlite.ai/cloud/secrets`)
+
+Keep third-party API keys and tokens out of Box guest memory, environment variables, filesystem, and `boxlite.json`:
+
+- **Placeholders & Proxy Substitution**: Inside the Box, send `<BOXLITE_SECRET:name>` (for example, via `OPENAI_API_KEY=<BOXLITE_SECRET:openai>` and `Authorization: Bearer <BOXLITE_SECRET:openai>`). The host outbound proxy substitutes `{value}` in configured `headers` when the destination matches `hosts` (such as `api.openai.com` or `*.openai.com`).
+- **Security Boundaries**: Raw secret `value` strings are stored solely in VS Code `SecretStorage` (`boxlite.proxySecrets`) on your workstation and are **never** written to `boxlite.json` or injected verbatim into `env`. If an outbound host is omitted from `hosts`, the literal placeholder passes through instead of your credential.
+- **TLS & Proxy CA Trust**: Guest HTTPS clients must trust the proxy CA certificate bundle at `/etc/ssl/certs/ca-certificates.crt` (do not disable TLS verification).
+- **Header Presence Rule**: The proxy only replaces the value of a header template already present in the outgoing HTTP request; it does not add missing headers or rewrite URLs, query parameters, or request bodies.
+- **Credential Rotation**: Secrets persist across `stop` / `start`. Use **Rotate Proxy Secret** (`boxlite.rotateSecret`) to update VS Code `SecretStorage` and create a replacement Box with the new credential, then delete the old Box and revoke the old key at the upstream provider.
+- **Fake-Token Diagnostic**: Run **Verify Secret Proxy Injection** (`boxlite.verifySecretInjection`) to launch a short-lived diagnostic Box with a synthetic `demo-not-a-real-key-*` token against `https://httpbingo.org/headers`, confirming header injection succeeds and the real token never appears inside guest `env`.
+
+---
+
 ## Extension Commands
 
 | Command | Title | Description |
@@ -232,4 +245,14 @@ When creating a Box via `BoxLite: Create Box with Options...` (or by choosing **
 | `boxlite.copyCheckpointId` | Copy Checkpoint ID | Copy checkpoint ID to clipboard |
 | `boxlite.copyCheckpointName` | Copy Checkpoint Name | Copy checkpoint name to clipboard |
 | `boxlite.deleteCheckpoint` | Delete Checkpoint | Delete a checkpoint with confirmation and optional force |
+| `boxlite.refreshSecrets` | Refresh Secrets | Refresh the Outbound Proxy Secrets view |
+| `boxlite.createSecret` | Create Proxy Secret | Create/store a host-scoped outbound proxy secret in VS Code SecretStorage |
+| `boxlite.createBoxWithSecret` | Create Box with Secret | Create a Cloud Box wired with a stored proxy secret and `<BOXLITE_SECRET:name>` env var |
+| `boxlite.addSecretToProject` | Add Secret Config to boxlite.json | Save redacted secret config (`name`, `hosts`, `headers`, `envVar`) to `boxlite.json` |
+| `boxlite.rotateSecret` | Rotate Proxy Secret | Update a secret value and create a replacement Box with the rotated credential |
+| `boxlite.copySecretPlaceholder` | Copy Secret Placeholder | Copy `<BOXLITE_SECRET:name>` placeholder to clipboard |
+| `boxlite.copySecretHeader` | Copy Guest Header | Copy example HTTP header using `<BOXLITE_SECRET:name>` to clipboard |
+| `boxlite.copySecretSnippet` | Copy Secret Usage Snippet | Copy Python/TypeScript SDK or guest HTTP snippet for a secret |
+| `boxlite.verifySecretInjection` | Verify Secret Proxy Injection | Run fake-token injection diagnostic against `httpbingo.org` |
+| `boxlite.deleteSecret` | Delete Proxy Secret | Remove a stored secret from VS Code SecretStorage |
 | `boxlite.openDocs` | Open Documentation | Open BoxLite agent documentation |

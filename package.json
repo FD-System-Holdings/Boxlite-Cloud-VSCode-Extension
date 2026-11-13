@@ -66,6 +66,12 @@
           "name": "Checkpoints",
           "icon": "$(archive)",
           "visibility": "visible"
+        },
+        {
+          "id": "boxlite.secretsView",
+          "name": "Secrets",
+          "icon": "$(shield)",
+          "visibility": "visible"
         }
       ]
     },
@@ -369,6 +375,66 @@
         "title": "Delete Checkpoint",
         "category": "BoxLite",
         "icon": "$(trash)"
+      },
+      {
+        "command": "boxlite.refreshSecrets",
+        "title": "Refresh Secrets",
+        "category": "BoxLite",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "boxlite.createSecret",
+        "title": "Create Proxy Secret",
+        "category": "BoxLite",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "boxlite.createBoxWithSecret",
+        "title": "Create Box with Secret",
+        "category": "BoxLite",
+        "icon": "$(vm)"
+      },
+      {
+        "command": "boxlite.addSecretToProject",
+        "title": "Add Secret Config to boxlite.json",
+        "category": "BoxLite",
+        "icon": "$(json)"
+      },
+      {
+        "command": "boxlite.rotateSecret",
+        "title": "Rotate Proxy Secret",
+        "category": "BoxLite",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "boxlite.copySecretPlaceholder",
+        "title": "Copy Secret Placeholder",
+        "category": "BoxLite",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "boxlite.copySecretHeader",
+        "title": "Copy Guest Header",
+        "category": "BoxLite",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "boxlite.copySecretSnippet",
+        "title": "Copy Secret Usage Snippet",
+        "category": "BoxLite",
+        "icon": "$(code)"
+      },
+      {
+        "command": "boxlite.verifySecretInjection",
+        "title": "Verify Secret Proxy Injection",
+        "category": "BoxLite",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "boxlite.deleteSecret",
+        "title": "Delete Proxy Secret",
+        "category": "BoxLite",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
@@ -437,6 +503,21 @@
           "command": "boxlite.createCheckpoint",
           "when": "view == boxlite.checkpointsView",
           "group": "navigation@2"
+        },
+        {
+          "command": "boxlite.refreshSecrets",
+          "when": "view == boxlite.secretsView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "boxlite.createSecret",
+          "when": "view == boxlite.secretsView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "boxlite.verifySecretInjection",
+          "when": "view == boxlite.secretsView",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -653,6 +734,41 @@
         {
           "command": "boxlite.deleteCheckpoint",
           "when": "view == boxlite.checkpointsView && viewItem =~ /^checkpoint-item.*/",
+          "group": "9_danger@1"
+        },
+        {
+          "command": "boxlite.createBoxWithSecret",
+          "when": "view == boxlite.secretsView && viewItem =~ /^secret-item.*/",
+          "group": "1_use@1"
+        },
+        {
+          "command": "boxlite.addSecretToProject",
+          "when": "view == boxlite.secretsView && viewItem =~ /^secret-item.*/",
+          "group": "1_use@2"
+        },
+        {
+          "command": "boxlite.copySecretPlaceholder",
+          "when": "view == boxlite.secretsView && viewItem =~ /^secret-item.*/",
+          "group": "2_copy@1"
+        },
+        {
+          "command": "boxlite.copySecretHeader",
+          "when": "view == boxlite.secretsView && viewItem =~ /^secret-item.*/",
+          "group": "2_copy@2"
+        },
+        {
+          "command": "boxlite.copySecretSnippet",
+          "when": "view == boxlite.secretsView && viewItem =~ /^secret-item.*/",
+          "group": "2_copy@3"
+        },
+        {
+          "command": "boxlite.rotateSecret",
+          "when": "view == boxlite.secretsView && viewItem =~ /^secret-item.*/",
+          "group": "3_manage@1"
+        },
+        {
+          "command": "boxlite.deleteSecret",
+          "when": "view == boxlite.secretsView && viewItem =~ /^secret-item.*/",
           "group": "9_danger@1"
         }
       ]

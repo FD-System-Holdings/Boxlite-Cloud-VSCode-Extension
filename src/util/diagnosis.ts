@@ -6,6 +6,38 @@ export interface DiagnosticMessage {
 export function diagnoseError(errorMessage: string, code?: string): DiagnosticMessage {
   const lower = errorMessage.toLowerCase();
 
+  if (lower.includes('certificate_verify_failed') || lower.includes('ssl') && lower.includes('cafile') || lower.includes('ca-certificates')) {
+    return {
+      summary: 'TLS Certificate Verification Failed for Outbound Proxy',
+      checklist: [
+        'Configure your HTTP client inside the box to trust the system CA bundle (/etc/ssl/certs/ca-certificates.crt)',
+        'In Python urllib, pass ssl.create_default_context(cafile="/etc/ssl/certs/ca-certificates.crt")',
+        'Do not disable TLS certificate verification; ensure ca-certificates is installed in custom images (docs.boxlite.ai/cloud/secrets)'
+      ]
+    };
+  }
+
+  if (lower.includes('secret') && (lower.includes('header') || lower.includes('missing'))) {
+    return {
+      summary: 'Secret Configuration Missing Required Headers Mapping',
+      checklist: [
+        'Supply an explicit headers mapping on Secret, such as {"Authorization": "Bearer {value}"} or {"X-Api-Key": "{value}"}',
+        'Verify the guest request already includes the target header with the <BOXLITE_SECRET:name> placeholder (the proxy replaces existing headers and does not add missing ones)'
+      ]
+    };
+  }
+
+  if (lower.includes('secret') || lower.includes('injection') || lower.includes('boxlite_secret')) {
+    return {
+      summary: 'Secret Proxy Injection Diagnosis',
+      checklist: [
+        'Verify both the destination hostname in Secret.hosts (without https:// or path) and an existing matching header in the guest request',
+        'Use <BOXLITE_SECRET:name> in the guest request header or env var, and keep {value} in Secret.headers',
+        'Ensure the box trusts /etc/ssl/certs/ca-certificates.crt for outbound HTTPS requests (docs.boxlite.ai/cloud/secrets)'
+      ]
+    };
+  }
+
   if (lower.includes('502') || lower.includes('unreachable')) {
     return {
       summary: '502 Bad Gateway / Box Unreachable',

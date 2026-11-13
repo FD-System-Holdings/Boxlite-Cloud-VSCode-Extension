@@ -1,11 +1,13 @@
 import * as vscode from 'vscode';
 import { CredentialsManager } from './auth/credentials';
+import { SecretsManager } from './auth/secretsStore';
 import { PythonEnvManager } from './bridge/env';
 import { BoxLiteBridgeClient } from './bridge/client';
 import { BoxesTreeDataProvider } from './tree/boxesProvider';
 import { VolumesTreeDataProvider } from './tree/volumesProvider';
 import { ImagesTreeDataProvider } from './tree/imagesProvider';
 import { CheckpointsTreeDataProvider } from './tree/checkpointsProvider';
+import { SecretsTreeDataProvider } from './tree/secretsProvider';
 import { AccountTreeDataProvider } from './tree/accountProvider';
 import { BoxLiteDeployer } from './deploy/deployer';
 import { LogStreamManager } from './logs/logStream';
@@ -61,6 +63,14 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(checkpointsTreeView);
 
+  const secretsManager = new SecretsManager(context);
+  const secretsProvider = new SecretsTreeDataProvider(bridge, credentials, secretsManager);
+  const secretsTreeView = vscode.window.createTreeView('boxlite.secretsView', {
+    treeDataProvider: secretsProvider,
+    showCollapseAll: true
+  });
+  context.subscriptions.push(secretsTreeView);
+
   const deployer = new BoxLiteDeployer(
     bridge,
     credentials,
@@ -72,7 +82,9 @@ export async function activate(context: vscode.ExtensionContext) {
       volumesProvider.refresh();
       imagesProvider.refresh();
       checkpointsProvider.refresh();
-    }
+      secretsProvider.refresh();
+    },
+    secretsManager
   );
 
   // Register all commands
@@ -87,7 +99,9 @@ export async function activate(context: vscode.ExtensionContext) {
     volumesProvider,
     imagesProvider,
     accountProvider,
-    checkpointsProvider
+    checkpointsProvider,
+    secretsProvider,
+    secretsManager
   );
 
   // Configuration change listener

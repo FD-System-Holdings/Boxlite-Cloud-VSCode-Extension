@@ -9,6 +9,7 @@ Communicates with the VS Code extension host over standard I/O using JSON-lines.
 import asyncio
 import json
 import os
+import secrets as py_secrets
 import sys
 import traceback
 import urllib.error
@@ -370,6 +371,48 @@ class BoxLiteBridge:
     def __init__(self):
         self.rt = None
         self.boxes: Dict[str, Any] = {}
+        self.box_secrets: Dict[str, List[Dict[str, Any]]] = {}
+
+    def _redact_secrets(self, raw_secrets: Any) -> List[Dict[str, Any]]:
+        if not raw_secrets or not isinstance(raw_secrets, list):
+            return []
+        redacted: List[Dict[str, Any]] = []
+        for s in raw_secrets:
+            if isinstance(s, dict):
+                s_name = s.get("name") or ""
+                s_hosts = list(s.get("hosts") or [])
+                s_headers = dict(s.get("headers") or {"Authorization": "Bearer {value}"})
+            else:
+                s_name = getattr(s, "name", "") or ""
+                s_hosts = list(getattr(s, "hosts", []) or [])
+                s_headers = dict(getattr(s, "headers", None) or {"Authorization": "Bearer {value}"})
+            if s_name:
+                redacted.append({
+                    "name": s_name,
+                    "hosts": s_hosts,
+                    "headers": s_headers
+                })
+        return redacted
+
+    def _format_secrets_payload(self, raw_secrets: Any) -> List[Dict[str, Any]]:
+        if not raw_secrets or not isinstance(raw_secrets, list):
+            return []
+        formatted: List[Dict[str, Any]] = []
+        for s in raw_secrets:
+            if not isinstance(s, dict):
+                continue
+            name = (s.get("name") or "").strip()
+            value = s.get("value") or ""
+            hosts = [str(h).strip() for h in (s.get("hosts") or []) if str(h).strip()]
+            headers = dict(s.get("headers") or {"Authorization": "Bearer {value}"})
+            if name and value:
+                formatted.append({
+                    "name": name,
+                    "value": value,
+                    "hosts": hosts,
+                    "headers": headers
+                })
+        return formatted
 
     def ensure_runtime(self):
         if self.rt is not None:
@@ -445,6 +488,8 @@ class BoxLiteBridge:
                 b_tunnels = getattr(b, "tunnels", None)
 
             b_volumes = b.get("volumes") if isinstance(b, dict) else getattr(b, "volumes", None)
+            b_secrets_raw = b.get("secrets") if isinstance(b, dict) else getattr(b, "secrets", None)
+            b_secrets = self._redact_secrets(b_secrets_raw) or self.box_secrets.get(b_id, [])
 
             b_status = extract_box_status(b)
 
@@ -458,6 +503,8 @@ class BoxLiteBridge:
                 box_info["tunnels"] = b_tunnels
             if b_volumes:
                 box_info["volumes"] = b_volumes
+            if b_secrets:
+                box_info["secrets"] = b_secrets
             result.append(box_info)
         return {"boxes": result}
 
@@ -475,9 +522,15 @@ class BoxLiteBridge:
         elif hasattr(info, "__dict__"):
             data = {k: v for k, v in info.__dict__.items() if not k.startswith("_")}
         elif isinstance(info, dict):
-            data = info
+            data = dict(info)
         else:
             data = {"id": box_id, "raw": str(info)}
+
+        if isinstance(data, dict):
+            if "secrets" in data and data["secrets"]:
+                data["secrets"] = self._redact_secrets(data["secrets"])
+            elif box_id in self.box_secrets and self.box_secrets[box_id]:
+                data["secrets"] = self.box_secrets[box_id]
         return {"box": data}
 
     async def handle_create_box(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -541,6 +594,8 @@ class BoxLiteBridge:
         env = args.get("env")
         network_spec = args.get("network")
         volumes = args.get("volumes")
+        secrets_payload = self._format_secrets_payload(args.get("secrets"))
+        redacted_secrets = self._redact_secrets(secrets_payload)
 
         if isinstance(rt, RestRuntimeFallback):
             # BoxLite Cloud REST API conforms to OpenAPI CreateBoxRequest.
@@ -575,12 +630,16 @@ class BoxLiteBridge:
                 kwargs["network"] = network_spec
             if volumes:
                 kwargs["volumes"] = volumes
+            if secrets_payload:
+                kwargs["secrets"] = secrets_payload
 
             res = await rt.create(**kwargs)
             box_id = res.get("box_id") or res.get("id") or name
             await rt.start(box_id)
             box = RestBoxFallback(rt, box_id, name or box_id)
             self.boxes[box_id] = box
+            if redacted_secrets:
+                self.box_secrets[box_id] = redacted_secrets
             return {"boxId": box_id, "name": name or box_id, "status": "running"}
 
         import boxlite
@@ -603,6 +662,18 @@ class BoxLiteBridge:
                 outbound=outbound_spec or boxlite.OutboundNetworkSpec(mode="enabled", allow_net=[]),
                 inbound=inbound_spec or boxlite.InboundNetworkSpec(mode="enabled")
             )
+
+        sdk_secrets = None
+        if secrets_payload:
+            sdk_secrets = [
+                boxlite.Secret(
+                    name=s["name"],
+                    value=s["value"],
+                    hosts=s["hosts"],
+                    headers=s["headers"]
+                )
+                for s in secrets_payload
+            ]
 
         kwargs = {
             "runtime": rt,
@@ -640,23 +711,105 @@ class BoxLiteBridge:
                 }
                 for v in volumes
             ]
+        if sdk_secrets:
+            kwargs["secrets"] = sdk_secrets
 
         try:
             box = boxlite.SimpleBox(**kwargs)
+            await box.start()
+            box_id = box.id
+            self.boxes[box_id] = box
         except TypeError as e:
-            # Drop newer optional kwargs if the installed wheel rejects them
-            log_debug(f"SimpleBox init with all options failed ({e}); falling back with core options.")
-            for key in ["auto_resume", "auto_delete", "disk_size_gb", "memory_mib", "cpus", "env", "cmd", "volumes"]:
-                kwargs.pop(key, None)
-            try:
-                box = boxlite.SimpleBox(**kwargs)
-            except TypeError:
-                kwargs.pop("auto_stop", None)
-                box = boxlite.SimpleBox(**kwargs)
+            if sdk_secrets:
+                # Never silently drop secrets; try rt.create(BoxOptions(...)) or REST fallback
+                log_debug(f"SimpleBox with secrets failed ({e}); trying BoxOptions / REST fallback.")
+                try:
+                    box_opts_kwargs: Dict[str, Any] = {
+                        "image": image,
+                        "secrets": sdk_secrets,
+                    }
+                    if auto_stop is not None:
+                        box_opts_kwargs["auto_stop"] = auto_stop
+                    if auto_delete is not None and auto_delete > 0:
+                        box_opts_kwargs["auto_delete"] = auto_delete
+                    if auto_resume is not None:
+                        box_opts_kwargs["auto_resume"] = auto_resume
+                    if cpus is not None:
+                        box_opts_kwargs["cpus"] = cpus
+                    if memory_mib is not None:
+                        box_opts_kwargs["memory_mib"] = memory_mib
+                    if disk_size_gb is not None:
+                        box_opts_kwargs["disk_size_gb"] = disk_size_gb
+                    if env:
+                        box_opts_kwargs["env"] = list(env.items()) if isinstance(env, dict) else env
+                    if cmd:
+                        box_opts_kwargs["cmd"] = cmd
+                    if entrypoint:
+                        box_opts_kwargs["entrypoint"] = entrypoint
+                    if net:
+                        box_opts_kwargs["network"] = net
+                    if volumes:
+                        box_opts_kwargs["volumes"] = kwargs["volumes"]
+                    create_kwargs = {"name": name} if name else {}
+                    box = await rt.create(boxlite.BoxOptions(**box_opts_kwargs), **create_kwargs)
+                    await box.start()
+                    box_id = box.id
+                    self.boxes[box_id] = box
+                except Exception as inner_e:
+                    log_debug(f"BoxOptions with secrets failed ({inner_e}); falling back to REST")
+                    fallback = RestRuntimeFallback(
+                        os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+                        os.environ.get("BOXLITE_API_KEY", "")
+                    )
+                    rest_kwargs: Dict[str, Any] = {
+                        "image": image or "python",
+                        "secrets": secrets_payload
+                    }
+                    if name:
+                        rest_kwargs["name"] = name
+                    if auto_stop is not None:
+                        rest_kwargs["auto_stop"] = 60 if 0 < auto_stop < 60 else auto_stop
+                    if auto_delete is not None and auto_delete > 0:
+                        rest_kwargs["auto_delete"] = auto_delete
+                    if auto_resume is not None:
+                        rest_kwargs["auto_resume"] = auto_resume
+                    if cpus is not None:
+                        rest_kwargs["cpus"] = cpus
+                    if memory_mib is not None:
+                        rest_kwargs["memory_mib"] = memory_mib
+                    if disk_size_gb is not None:
+                        rest_kwargs["disk_size_gb"] = disk_size_gb
+                    if env:
+                        rest_kwargs["env"] = env
+                    if cmd:
+                        rest_kwargs["cmd"] = cmd
+                    if entrypoint:
+                        rest_kwargs["entrypoint"] = entrypoint
+                    if network_spec:
+                        rest_kwargs["network"] = network_spec
+                    if volumes:
+                        rest_kwargs["volumes"] = volumes
+                    res = await fallback.create(**rest_kwargs)
+                    box_id = res.get("box_id") or res.get("id") or name
+                    await fallback.start(box_id)
+                    box = RestBoxFallback(fallback, box_id, name or box_id)
+                    self.boxes[box_id] = box
+            else:
+                # Drop newer optional kwargs if the installed wheel rejects them
+                log_debug(f"SimpleBox init with all options failed ({e}); falling back with core options.")
+                for key in ["auto_resume", "auto_delete", "disk_size_gb", "memory_mib", "cpus", "env", "cmd", "volumes"]:
+                    kwargs.pop(key, None)
+                try:
+                    box = boxlite.SimpleBox(**kwargs)
+                except TypeError:
+                    kwargs.pop("auto_stop", None)
+                    box = boxlite.SimpleBox(**kwargs)
+                await box.start()
+                box_id = box.id
+                self.boxes[box_id] = box
 
-        await box.start()
-        box_id = box.id
-        self.boxes[box_id] = box
+        if redacted_secrets:
+            self.box_secrets[box_id] = redacted_secrets
 
         return {
             "boxId": box_id,
@@ -1383,6 +1536,79 @@ class BoxLiteBridge:
         )
         await fallback.remove_checkpoint(key, force=force)
         return {"checkpointKey": key, "removed": True}
+
+    async def handle_verify_secret_injection(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        image = args.get("image") or "python:alpine"
+        host = args.get("host") or "httpbingo.org"
+        token = "demo-not-a-real-key-" + py_secrets.token_hex(16)
+        box_id = None
+        cleaned_up = False
+
+        try:
+            created = await self.handle_create_box({
+                "image": image,
+                "autoStop": 0,
+                "autoDelete": 0,
+                "secrets": [{
+                    "name": "demo",
+                    "value": token,
+                    "hosts": [host],
+                    "headers": {"Authorization": "Bearer {value}"}
+                }]
+            })
+            box_id = created["boxId"]
+
+            env_res = await self.handle_exec({
+                "boxId": box_id,
+                "command": "env",
+                "args": []
+            })
+            env_out = env_res.get("stdout", "")
+            if env_res.get("exitCode", 0) != 0 or not env_out.strip() or token in env_out:
+                raise RuntimeError("Guest environment check failed: test token appeared in guest environment or env failed.")
+
+            request_code = (
+                "import json, ssl, urllib.request\n"
+                f'req = urllib.request.Request("https://{host}/headers", headers={{"Authorization": "Bearer <BOXLITE_SECRET:demo>"}})\n'
+                'ctx = ssl.create_default_context(cafile="/etc/ssl/certs/ca-certificates.crt")\n'
+                "with urllib.request.urlopen(req, context=ctx, timeout=30) as response:\n"
+                "    print(response.read().decode())\n"
+            )
+            echo_res = await self.handle_exec({
+                "boxId": box_id,
+                "command": "python",
+                "args": ["-c", request_code]
+            })
+            if echo_res.get("exitCode", 0) != 0:
+                raise RuntimeError(f"Header injection probe failed (exit {echo_res.get('exitCode')}): {echo_res.get('stderr', '')}")
+
+            echoed = json.loads(echo_res.get("stdout", "{}"))
+            echo_headers = {str(k).lower(): v for k, v in (echoed.get("headers") or {}).items()}
+            authorization = echo_headers.get("authorization")
+            if isinstance(authorization, list):
+                authorization = authorization[0] if authorization else None
+            if authorization != f"Bearer {token}":
+                raise RuntimeError("Upstream did not receive the injected Authorization header")
+
+            return {
+                "boxId": box_id,
+                "envCheckPassed": True,
+                "headerInjectionPassed": True,
+                "cleanedUp": True,
+                "summary": "PASS: guest environment clean; PASS: upstream received injected Authorization header"
+            }
+        finally:
+            if box_id is not None:
+                try:
+                    await rt.remove(box_id, force=True)
+                    if box_id in self.boxes:
+                        del self.boxes[box_id]
+                    if box_id in self.box_secrets:
+                        del self.box_secrets[box_id]
+                    cleaned_up = True
+                except Exception as cleanup_err:
+                    log_debug(f"Failed to remove verification box {box_id}: {cleanup_err}")
 
     async def dispatch(self, req: Dict[str, Any]):
         req_id = req.get("id", "none")
