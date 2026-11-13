@@ -4,6 +4,7 @@
   "description": "Deploy and manage BoxLite cloud applications with ease",
   "version": "0.1.1",
   "publisher": "FD-System-Holdings",
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -39,21 +40,25 @@
         {
           "id": "boxlite.accountView",
           "name": "BoxLite Cloud Account",
+          "icon": "$(account)",
           "visibility": "visible"
         },
         {
           "id": "boxlite.boxesView",
           "name": "Boxes",
+          "icon": "$(vm)",
           "visibility": "visible"
         },
         {
           "id": "boxlite.imagesView",
           "name": "Images",
+          "icon": "$(package)",
           "visibility": "visible"
         },
         {
           "id": "boxlite.volumesView",
           "name": "Volumes",
+          "icon": "$(database)",
           "visibility": "visible"
         }
       ]
