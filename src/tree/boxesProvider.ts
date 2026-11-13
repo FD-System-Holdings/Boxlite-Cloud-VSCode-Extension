@@ -243,7 +243,24 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
         )
       );
 
-      // 6. Inspect JSON
+      // 6. Save Checkpoint
+      children.push(
+        new BoxChildTreeItem(
+          'Save Checkpoint...',
+          'Capture stopped box disk & config',
+          'archive',
+          {
+            command: 'boxlite.createCheckpointFromBox',
+            title: 'Save Checkpoint...',
+            arguments: [element]
+          },
+          vscode.TreeItemCollapsibleState.None,
+          'box-checkpoint-action',
+          element.box.id
+        )
+      );
+
+      // 7. Inspect JSON
       children.push(
         new BoxChildTreeItem(
           'Inspect Box Details',

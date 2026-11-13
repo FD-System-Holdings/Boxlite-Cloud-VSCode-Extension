@@ -8,7 +8,9 @@ import {
   validateAliasName,
   validateDigest,
   validateRegistryHost,
-  validateRepositoryPrefix
+  validateRepositoryPrefix,
+  validateCheckpointName,
+  validateCheckpointBoxOptions
 } from '../src/util/validation';
 
 describe('Network Allowlist and Policy Validation', () => {
@@ -193,5 +195,25 @@ describe('Image Reference, Alias and Registry Validation', () => {
     assert.ok(leadingSlash.error?.includes('leading "/"'));
 
     assert.strictEqual(validateRepositoryPrefix('acme /').valid, false);
+  });
+
+  it('validates checkpoint names properly', () => {
+    assert.strictEqual(validateCheckpointName('warm-env-v1').valid, true);
+    assert.strictEqual(validateCheckpointName('chk_snapshot.01').valid, true);
+
+    assert.strictEqual(validateCheckpointName('').valid, false);
+    assert.strictEqual(validateCheckpointName('-bad').valid, false);
+    assert.strictEqual(validateCheckpointName('bad space').valid, false);
+    assert.strictEqual(validateCheckpointName('a'.repeat(129)).valid, false);
+  });
+
+  it('validates checkpoint box creation options against forbidden overrides', () => {
+    assert.strictEqual(validateCheckpointBoxOptions('', false).valid, false);
+    assert.strictEqual(validateCheckpointBoxOptions(undefined, false).valid, false);
+    assert.strictEqual(validateCheckpointBoxOptions('chk_123', false).valid, true);
+
+    const invalid = validateCheckpointBoxOptions('chk_123', true);
+    assert.strictEqual(invalid.valid, false);
+    assert.ok(invalid.error && invalid.error.length > 0);
   });
 });

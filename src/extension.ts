@@ -5,6 +5,7 @@ import { BoxLiteBridgeClient } from './bridge/client';
 import { BoxesTreeDataProvider } from './tree/boxesProvider';
 import { VolumesTreeDataProvider } from './tree/volumesProvider';
 import { ImagesTreeDataProvider } from './tree/imagesProvider';
+import { CheckpointsTreeDataProvider } from './tree/checkpointsProvider';
 import { AccountTreeDataProvider } from './tree/accountProvider';
 import { BoxLiteDeployer } from './deploy/deployer';
 import { LogStreamManager } from './logs/logStream';
@@ -53,6 +54,13 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(volumesTreeView);
 
+  const checkpointsProvider = new CheckpointsTreeDataProvider(bridge, credentials);
+  const checkpointsTreeView = vscode.window.createTreeView('boxlite.checkpointsView', {
+    treeDataProvider: checkpointsProvider,
+    showCollapseAll: true
+  });
+  context.subscriptions.push(checkpointsTreeView);
+
   const deployer = new BoxLiteDeployer(
     bridge,
     credentials,
@@ -63,6 +71,7 @@ export async function activate(context: vscode.ExtensionContext) {
       treeProvider.refresh();
       volumesProvider.refresh();
       imagesProvider.refresh();
+      checkpointsProvider.refresh();
     }
   );
 
@@ -77,7 +86,8 @@ export async function activate(context: vscode.ExtensionContext) {
     logManager,
     volumesProvider,
     imagesProvider,
-    accountProvider
+    accountProvider,
+    checkpointsProvider
   );
 
   // Configuration change listener

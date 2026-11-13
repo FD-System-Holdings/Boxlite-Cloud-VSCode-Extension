@@ -60,6 +60,12 @@
           "name": "Volumes",
           "icon": "$(database)",
           "visibility": "visible"
+        },
+        {
+          "id": "boxlite.checkpointsView",
+          "name": "Checkpoints",
+          "icon": "$(archive)",
+          "visibility": "visible"
         }
       ]
     },
@@ -309,6 +315,60 @@
         "title": "Connect Private Registry...",
         "category": "BoxLite",
         "icon": "$(key)"
+      },
+      {
+        "command": "boxlite.refreshCheckpoints",
+        "title": "Refresh Checkpoints",
+        "category": "BoxLite",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "boxlite.createCheckpoint",
+        "title": "Create Checkpoint...",
+        "category": "BoxLite",
+        "icon": "$(add)"
+      },
+      {
+        "command": "boxlite.createCheckpointFromBox",
+        "title": "Save Checkpoint from Box...",
+        "category": "BoxLite",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "boxlite.createBoxFromCheckpoint",
+        "title": "Create Box from Checkpoint...",
+        "category": "BoxLite",
+        "icon": "$(repo-forked)"
+      },
+      {
+        "command": "boxlite.forkFleetFromCheckpoint",
+        "title": "Fork Worker Fleet from Checkpoint...",
+        "category": "BoxLite",
+        "icon": "$(organization)"
+      },
+      {
+        "command": "boxlite.inspectCheckpoint",
+        "title": "Inspect Checkpoint (JSON)",
+        "category": "BoxLite",
+        "icon": "$(json)"
+      },
+      {
+        "command": "boxlite.copyCheckpointId",
+        "title": "Copy Checkpoint ID",
+        "category": "BoxLite",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "boxlite.copyCheckpointName",
+        "title": "Copy Checkpoint Name",
+        "category": "BoxLite",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "boxlite.deleteCheckpoint",
+        "title": "Delete Checkpoint",
+        "category": "BoxLite",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
@@ -366,6 +426,16 @@
         {
           "command": "boxlite.createVolume",
           "when": "view == boxlite.volumesView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "boxlite.refreshCheckpoints",
+          "when": "view == boxlite.checkpointsView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "boxlite.createCheckpoint",
+          "when": "view == boxlite.checkpointsView",
           "group": "navigation@2"
         }
       ],
@@ -471,6 +541,11 @@
           "group": "2_inspect@4"
         },
         {
+          "command": "boxlite.createCheckpointFromBox",
+          "when": "view == boxlite.boxesView && viewItem =~ /^box-.*/",
+          "group": "2_inspect@5"
+        },
+        {
           "command": "boxlite.setAccess",
           "when": "view == boxlite.boxesView && viewItem =~ /^box-.*/",
           "group": "3_network@1"
@@ -543,6 +618,41 @@
         {
           "command": "boxlite.deleteVolume",
           "when": "view == boxlite.volumesView && viewItem =~ /^volume-.*/",
+          "group": "9_danger@1"
+        },
+        {
+          "command": "boxlite.createBoxFromCheckpoint",
+          "when": "view == boxlite.checkpointsView && viewItem =~ /.*checkpoint-ready.*/",
+          "group": "inline@1"
+        },
+        {
+          "command": "boxlite.createBoxFromCheckpoint",
+          "when": "view == boxlite.checkpointsView && viewItem =~ /^checkpoint-item.*/",
+          "group": "1_restore@1"
+        },
+        {
+          "command": "boxlite.forkFleetFromCheckpoint",
+          "when": "view == boxlite.checkpointsView && viewItem =~ /^checkpoint-item.*/",
+          "group": "1_restore@2"
+        },
+        {
+          "command": "boxlite.inspectCheckpoint",
+          "when": "view == boxlite.checkpointsView && viewItem =~ /^checkpoint-item.*/",
+          "group": "2_inspect@1"
+        },
+        {
+          "command": "boxlite.copyCheckpointId",
+          "when": "view == boxlite.checkpointsView && viewItem =~ /^checkpoint-item.*/",
+          "group": "3_copy@1"
+        },
+        {
+          "command": "boxlite.copyCheckpointName",
+          "when": "view == boxlite.checkpointsView && viewItem =~ /^checkpoint-item.*/",
+          "group": "3_copy@2"
+        },
+        {
+          "command": "boxlite.deleteCheckpoint",
+          "when": "view == boxlite.checkpointsView && viewItem =~ /^checkpoint-item.*/",
           "group": "9_danger@1"
         }
       ]

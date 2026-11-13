@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { BoxListItem, TunnelInfo, VolumeItem, ImageItem, ImageUsage } from '../bridge/protocol';
+import { BoxListItem, TunnelInfo, VolumeItem, ImageItem, ImageUsage, CheckpointItem } from '../bridge/protocol';
 
 export abstract class BoxLiteTreeItem extends vscode.TreeItem {
   constructor(
@@ -301,6 +301,73 @@ export class ImageChildTreeItem extends BoxLiteTreeItem {
     collapsible: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
     contextValue?: string,
     public readonly imageName?: string,
+    tooltip?: string
+  ) {
+    super(label, collapsible);
+    this.description = description;
+    this.tooltip = tooltip || description;
+    if (icon) {
+      this.iconPath = new vscode.ThemeIcon(icon);
+    }
+    this.command = command;
+    this.contextValue = contextValue;
+  }
+}
+
+export class CheckpointTreeItem extends BoxLiteTreeItem {
+  public readonly checkpoint: CheckpointItem;
+
+  constructor(checkpoint: CheckpointItem) {
+    const shortId = checkpoint.id.length > 8 ? checkpoint.id.substring(0, 8) : checkpoint.id;
+    super(checkpoint.name || `chk-${shortId}`, vscode.TreeItemCollapsibleState.Collapsed);
+    this.checkpoint = checkpoint;
+
+    const state = (checkpoint.state || 'ready').toLowerCase().trim();
+    const isReady = state === 'ready';
+    const isCreating = state === 'creating' || state === 'pending_create';
+    const isDeleting = state === 'deleting' || state === 'pending_delete';
+    const isFailed = state === 'failed' || state === 'error';
+
+    const sizeSuffix = checkpoint.sizeBytes && checkpoint.sizeBytes > 0 ? ` · ${formatBytes(checkpoint.sizeBytes)}` : '';
+    this.description = `${state} · ${shortId}${sizeSuffix}`;
+
+    let tooltip = `Checkpoint ID: ${checkpoint.id}\nName: ${checkpoint.name || `chk-${shortId}`}\nState: ${state}\nSource Box: ${checkpoint.sourceBoxId || 'N/A'}`;
+    if (checkpoint.sizeBytes && checkpoint.sizeBytes > 0) {
+      tooltip += `\nSize: ${formatBytes(checkpoint.sizeBytes)}`;
+    }
+    if (checkpoint.createdAt) {
+      tooltip += `\nCreated: ${checkpoint.createdAt}`;
+    }
+    if (checkpoint.errorReason) {
+      tooltip += `\nError: ${checkpoint.errorReason}`;
+    }
+    this.tooltip = tooltip;
+
+    if (isReady) {
+      this.iconPath = new vscode.ThemeIcon('archive', new vscode.ThemeColor('symbolIcon.fieldForeground'));
+    } else if (isCreating) {
+      this.iconPath = new vscode.ThemeIcon('sync~spin');
+    } else if (isDeleting) {
+      this.iconPath = new vscode.ThemeIcon('trash');
+    } else if (isFailed) {
+      this.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('testing.iconFailed'));
+    } else {
+      this.iconPath = new vscode.ThemeIcon('archive');
+    }
+
+    this.contextValue = `checkpoint-item checkpoint-${state}${isReady ? '-ready' : ''}${isCreating ? '-creating' : ''}${isDeleting ? '-deleting' : ''}${isFailed ? '-failed' : ''}`;
+  }
+}
+
+export class CheckpointChildTreeItem extends BoxLiteTreeItem {
+  constructor(
+    label: string,
+    description?: string,
+    icon?: string,
+    command?: vscode.Command,
+    collapsible: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
+    contextValue?: string,
+    public readonly checkpointKey?: string,
     tooltip?: string
   ) {
     super(label, collapsible);

@@ -44,6 +44,11 @@ This extension provides a unified developer experience for creating, deploying, 
   - Mount volumes into existing boxes or workspace project configuration (`boxlite.json`).
   - Safe volume deletion with permanent data loss confirmation and force-deletion options.
   - Copy Volume ID and Name to clipboard for scripting and CLI compatibility.
+- **Checkpoints & Parallel Fleet Forking (`boxlite.checkpointsView`):**
+  - Dedicated Checkpoints section in the BoxLite Cloud Activity Bar container to capture and restore box snapshots.
+  - Capture point-in-time checkpoints directly from stopped boxes (`Save Checkpoint...`), with guided stop prompts for running boxes and validation against attached volumes or secrets.
+  - Create single boxes (`Create Box from Checkpoint...`) or fork parallel worker fleets (`Fork Fleet from Checkpoint...`) inheriting the checkpoint's configuration and rootfs state.
+  - Inspect checkpoint JSON metadata, track async creation/deletion states (`creating`, `ready`, `failed`, `deleting`), copy IDs/names, and delete checkpoints with optional force-removal.
 - **Granular Network & Security Policies:**
   - Inbound toggle: Enable or disable Cloud proxy access.
   - Outbound allowlist editor: Strict validation for hostnames (`api.example.com`), wildcards (`*.example.com`), IPv4 (`1.2.3.4`), and CIDR (`10.0.0.0/8`).
@@ -155,6 +160,14 @@ When creating a Box via `BoxLite: Create Box with Options...` (or by choosing **
 
 ---
 
+## Checkpoints & Fleet Forking Guidelines
+
+- **Stopped Source Required:** Capture checkpoints only from `stopped` boxes. Running boxes must be explicitly stopped first (never auto-stopped silently).
+- **No Volumes or Secrets:** Checkpoints cannot be created from boxes with attached managed volumes or Secrets proxy injection rules; keep reusable assets inside the rootfs image and attach dynamic inputs after restore if needed outside checkpoint lineage.
+- **Inherited Configuration:** Boxes restored from a checkpoint (`checkpoint_id`) inherit the source box's disk, image, execution, resource, network, and lifecycle configuration; only `checkpoint` and an optional `name` may be provided when creating a box or forking a parallel fleet.
+
+---
+
 ## Images & Container Registry Guide
 
 - **Built-in Images:** BoxLite Cloud provides four maintained base images:
@@ -210,4 +223,13 @@ When creating a Box via `BoxLite: Create Box with Options...` (or by choosing **
 | `boxlite.copyVolumeId` | Copy Volume ID | Copy volume ID to clipboard |
 | `boxlite.copyVolumeName` | Copy Volume Name | Copy volume name to clipboard |
 | `boxlite.addVolumeToBox` | Mount Volume in Box... | Mount a volume into container or boxlite.json |
+| `boxlite.createCheckpoint` | Create Checkpoint... | Capture a checkpoint from a stopped box |
+| `boxlite.createCheckpointFromBox` | Save Checkpoint... | Capture a checkpoint from the selected box |
+| `boxlite.createBoxFromCheckpoint` | Create Box from Checkpoint... | Create a new box restored from a checkpoint |
+| `boxlite.forkFleetFromCheckpoint` | Fork Fleet from Checkpoint... | Fork N parallel worker boxes from a checkpoint |
+| `boxlite.refreshCheckpoints` | Refresh Checkpoints | Refresh the Checkpoints explorer view |
+| `boxlite.inspectCheckpoint` | Inspect Checkpoint (JSON) | View checkpoint state and metadata JSON |
+| `boxlite.copyCheckpointId` | Copy Checkpoint ID | Copy checkpoint ID to clipboard |
+| `boxlite.copyCheckpointName` | Copy Checkpoint Name | Copy checkpoint name to clipboard |
+| `boxlite.deleteCheckpoint` | Delete Checkpoint | Delete a checkpoint with confirmation and optional force |
 | `boxlite.openDocs` | Open Documentation | Open BoxLite agent documentation |

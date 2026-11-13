@@ -53,6 +53,21 @@ export interface CreateVolumeArgs {
   name?: string;
 }
 
+export interface CheckpointItem {
+  id: string;
+  name: string;
+  sourceBoxId: string;
+  state: 'creating' | 'ready' | 'failed' | 'deleting' | string;
+  createdAt?: string;
+  sizeBytes?: number;
+  errorReason?: string;
+}
+
+export interface CreateCheckpointArgs {
+  sourceBoxId: string;
+  name?: string;
+}
+
 export interface ImageUsage {
   count: number;
   limit: number;
@@ -126,6 +141,7 @@ export interface NetworkConfig {
 export interface CreateBoxArgs {
   name?: string;
   image?: string;
+  checkpoint?: string;
   autoRemove?: boolean;
   autoStop?: number;
   autoDelete?: number;

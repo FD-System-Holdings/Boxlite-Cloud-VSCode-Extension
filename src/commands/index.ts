@@ -1,13 +1,14 @@
 import * as vscode from 'vscode';
 import { BoxLiteBridgeClient } from '../bridge/client';
-import { CreateBoxArgs, VolumeItem } from '../bridge/protocol';
+import { CreateBoxArgs, VolumeItem, CheckpointItem } from '../bridge/protocol';
 import { CredentialsManager } from '../auth/credentials';
 import { PythonEnvManager } from '../bridge/env';
 import { BoxesTreeDataProvider } from '../tree/boxesProvider';
 import { VolumesTreeDataProvider } from '../tree/volumesProvider';
 import { ImagesTreeDataProvider } from '../tree/imagesProvider';
+import { CheckpointsTreeDataProvider } from '../tree/checkpointsProvider';
 import { AccountTreeDataProvider } from '../tree/accountProvider';
-import { BoxTreeItem, VolumeTreeItem, ImageTreeItem, ApiKeyTreeItem } from '../tree/nodes';
+import { BoxTreeItem, VolumeTreeItem, ImageTreeItem, CheckpointTreeItem, ApiKeyTreeItem } from '../tree/nodes';
 import { BoxLiteDeployer } from '../deploy/deployer';
 import { scaffoldNewProject } from '../deploy/scaffold';
 import { ProjectManager } from '../deploy/project';
@@ -22,6 +23,8 @@ import {
   validateDigest,
   validateRegistryHost,
   validateRepositoryPrefix,
+  validateCheckpointName,
+  validateCheckpointBoxOptions,
   ALLOWED_REGISTRY_HOSTS
 } from '../util/validation';
 import { diagnoseError } from '../util/diagnosis';
@@ -44,7 +47,8 @@ export function registerCommands(
   logManager: LogStreamManager,
   volumesProvider?: VolumesTreeDataProvider,
   imagesProvider?: ImagesTreeDataProvider,
-  accountProvider?: AccountTreeDataProvider
+  accountProvider?: AccountTreeDataProvider,
+  checkpointsProvider?: CheckpointsTreeDataProvider
 ) {
   const refreshAllViews = () => {
     bridge.restartBridge();
@@ -52,6 +56,7 @@ export function registerCommands(
     treeProvider.refresh();
     volumesProvider?.refresh();
     imagesProvider?.refresh();
+    checkpointsProvider?.refresh();
   };
 
   // 1. Auth commands
@@ -169,6 +174,7 @@ export function registerCommands(
       treeProvider.refresh();
       volumesProvider?.refresh();
       imagesProvider?.refresh();
+      checkpointsProvider?.refresh();
     })
   );
 
@@ -257,6 +263,12 @@ export function registerCommands(
           description: 'python image · 1 vCPU · 1 GiB RAM · 10 GiB Disk · Network disabled · Stop on idle: 5m',
           detail: 'Fast one-click creation using small box sizing with inbound and outbound network disabled (agent.md §3)',
           action: 'quick'
+        },
+        {
+          label: '$(archive) Create from Checkpoint...',
+          description: 'Restore a new independent Box from a saved checkpoint',
+          detail: 'Inherits saved root disk and execution configuration (docs.boxlite.ai/cloud/checkpoints)',
+          action: 'checkpoint'
         }
       ];
 
@@ -331,6 +343,8 @@ export function registerCommands(
         const config = getQuickCreateBoxConfiguration(name);
         const args = convertBoxConfigToCreateArgs(config);
         await performCreateBox(args);
+      } else if (choice.action === 'checkpoint') {
+        await vscode.commands.executeCommand('boxlite.createBoxFromCheckpoint');
       }
     })
   );
@@ -1253,6 +1267,427 @@ export function registerCommands(
       );
     })
   );
+
+  // 17. Checkpoint Commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.refreshCheckpoints', async () => {
+      checkpointsProvider?.refresh();
+    })
+  );
+
+  async function handleCreateCheckpoint(item?: any): Promise<void> {
+    const boxId = await resolveBoxId(item, bridge);
+    if (!boxId) {
+      return;
+    }
+
+    // Check box status and attachments (volumes / secrets) before capture
+    let currentStatus = ((item?.box?.status as string) || '').toLowerCase().trim();
+    let hasVolumes = Array.isArray(item?.box?.volumes) && item.box.volumes.length > 0;
+    let hasSecrets = false;
+
+    if (typeof bridge.inspectBox === 'function') {
+      try {
+        const info = await bridge.inspectBox(boxId);
+        if (info) {
+          const rawStatus = info.status || info.state?.status || currentStatus;
+          if (rawStatus) {
+            currentStatus = String(rawStatus).toLowerCase().trim();
+          }
+          const vols = info.volumes || info.config?.volumes;
+          if (Array.isArray(vols) && vols.length > 0) {
+            hasVolumes = true;
+          }
+          const secrets = info.secrets || info.config?.secrets;
+          if (Array.isArray(secrets) && secrets.length > 0) {
+            hasSecrets = true;
+          }
+        }
+      } catch {
+        // Proceed with cached metadata if inspect is unavailable
+      }
+    }
+
+    if (hasVolumes || hasSecrets) {
+      vscode.window.showErrorMessage(
+        'Checkpoints do not support boxes with attached volumes or Secrets (docs.boxlite.ai/cloud/checkpoints). Create a source box without those attachments.'
+      );
+      return;
+    }
+
+    const stoppedStatuses = ['stopped', 'terminated', 'exited', 'configured', 'paused', 'inactive', 'shutdown'];
+    if (currentStatus && !stoppedStatuses.includes(currentStatus)) {
+      const boxLabel = item?.box?.name || boxId.substring(0, 8);
+      const stopConfirm = await vscode.window.showWarningMessage(
+        `Box "${boxLabel}" is currently "${currentStatus}". A source box must be stopped before capturing a checkpoint. Stop it now and wait for "stopped"?`,
+        { modal: true },
+        'Stop Box & Capture',
+        'Cancel'
+      );
+      if (stopConfirm !== 'Stop Box & Capture') {
+        return;
+      }
+
+      let stoppedOk = false;
+      try {
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Stopping Box ${boxLabel} before checkpoint capture...`
+          },
+          async () => {
+            logManager?.stopStreaming?.(boxId);
+            const stopRes = await bridge.stopBox(boxId);
+            const finalStatus = (stopRes?.status || 'stopped').toLowerCase().trim();
+            if (!stoppedStatuses.includes(finalStatus)) {
+              throw new Error(`Box did not reach stopped state (current status: ${finalStatus}).`);
+            }
+            stoppedOk = true;
+          }
+        );
+        treeProvider.refresh();
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`Failed to stop Box before checkpoint: ${e.message}`);
+        return;
+      }
+
+      if (!stoppedOk) {
+        return;
+      }
+    }
+
+    const name = await vscode.window.showInputBox({
+      prompt: 'Enter name for the checkpoint (leave empty for auto-assigned)',
+      placeHolder: 'e.g. dev-base, prepared-workspace',
+      validateInput: (v) => {
+        if (v && v.trim()) {
+          const check = validateCheckpointName(v.trim());
+          if (!check.valid) {
+            return check.error;
+          }
+        }
+        return null;
+      }
+    });
+    if (name === undefined) {
+      return;
+    }
+
+    let checkpoint: CheckpointItem | undefined;
+    try {
+      checkpoint = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Creating checkpoint${name.trim() ? ` "${name.trim()}"` : ''} from Box ${boxId.substring(0, 8)}...`
+        },
+        async () => {
+          return await bridge.createCheckpoint({
+            sourceBoxId: boxId,
+            name: name.trim() ? name.trim() : undefined
+          });
+        }
+      );
+      checkpointsProvider?.refresh();
+    } catch (e: any) {
+      const diag = diagnoseError(e.message);
+      const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
+      vscode.window.showErrorMessage(`Failed to create checkpoint: ${msg}`);
+      return;
+    }
+
+    if (checkpoint) {
+      const state = (checkpoint.state || 'creating').toLowerCase().trim();
+      if (state === 'ready') {
+        const choice = await vscode.window.showInformationMessage(
+          `Checkpoint "${checkpoint.name}" is ready (ID: ${checkpoint.id}).`,
+          'Create Box from Checkpoint',
+          'Copy ID'
+        );
+        if (choice === 'Create Box from Checkpoint') {
+          await vscode.commands.executeCommand('boxlite.createBoxFromCheckpoint', checkpoint);
+        } else if (choice === 'Copy ID') {
+          await vscode.env.clipboard.writeText(checkpoint.id);
+        }
+      } else {
+        const choice = await vscode.window.showInformationMessage(
+          `Checkpoint "${checkpoint.name}" creation started (ID: ${checkpoint.id}, state: ${state}). Keep the source box stopped until it becomes ready.`,
+          'Copy ID'
+        );
+        if (choice === 'Copy ID') {
+          await vscode.env.clipboard.writeText(checkpoint.id);
+        }
+      }
+    }
+  }
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.createCheckpoint', async (item?: any) => {
+      await handleCreateCheckpoint(item);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.createCheckpointFromBox', async (item?: any) => {
+      await handleCreateCheckpoint(item);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.createBoxFromCheckpoint', async (item?: any) => {
+      const chk = await resolveCheckpoint(item, bridge);
+      if (!chk) {
+        return;
+      }
+
+      const state = (chk.state || 'ready').toLowerCase().trim();
+      if (state === 'failed' || state === 'error' || state === 'deleting' || state === 'pending_delete') {
+        vscode.window.showErrorMessage(
+          `Cannot restore a box from checkpoint "${chk.name}" while its state is "${state}".`
+        );
+        return;
+      }
+
+      if (state === 'creating' || state === 'pending_create') {
+        const proceed = await vscode.window.showWarningMessage(
+          `Checkpoint "${chk.name}" is still "${state}". Wait until it reaches "ready" before creating a box, or attempt anyway?`,
+          'Attempt Anyway',
+          'Cancel'
+        );
+        if (proceed !== 'Attempt Anyway') {
+          return;
+        }
+      }
+
+      const checkOpts = validateCheckpointBoxOptions(chk.id, false);
+      if (!checkOpts.valid) {
+        vscode.window.showErrorMessage(checkOpts.error || 'Invalid checkpoint restore options.');
+        return;
+      }
+
+      const boxName = await vscode.window.showInputBox({
+        prompt: `Enter optional name for the new Box restored from "${chk.name}" (saved config will be inherited)`,
+        value: generateBoxName('worker'),
+        placeHolder: 'Leave empty for auto-generated name'
+      });
+      if (boxName === undefined) {
+        return;
+      }
+
+      const trimmedName = boxName.trim() ? boxName.trim() : undefined;
+      let created: { boxId: string; name: string; status: string } | undefined;
+
+      try {
+        created = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Creating Box${trimmedName ? ` "${trimmedName}"` : ''} from checkpoint "${chk.name}"...`
+          },
+          async () => {
+            // Only checkpoint and optional name are passed; saved settings are inherited
+            const args: CreateBoxArgs = { checkpoint: chk.id };
+            if (trimmedName) {
+              args.name = trimmedName;
+            }
+            return await bridge.createBox(args);
+          }
+        );
+        treeProvider.refresh();
+      } catch (e: any) {
+        const diag = diagnoseError(e.message);
+        const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
+        vscode.window.showErrorMessage(`Failed to create Box from checkpoint: ${msg}`);
+        return;
+      }
+
+      if (created) {
+        await vscode.window.showInformationMessage(
+          `Box "${created.name || created.boxId}" created from checkpoint "${chk.name}" (ID: ${created.boxId}).`
+        );
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.forkFleetFromCheckpoint', async (item?: any) => {
+      const chk = await resolveCheckpoint(item, bridge);
+      if (!chk) {
+        return;
+      }
+
+      const state = (chk.state || 'ready').toLowerCase().trim();
+      if (state === 'failed' || state === 'error' || state === 'deleting' || state === 'pending_delete') {
+        vscode.window.showErrorMessage(
+          `Cannot fork worker fleet from checkpoint "${chk.name}" while its state is "${state}".`
+        );
+        return;
+      }
+
+      if (state === 'creating' || state === 'pending_create') {
+        const proceed = await vscode.window.showWarningMessage(
+          `Checkpoint "${chk.name}" is still "${state}". Wait until it reaches "ready" before forking workers, or attempt anyway?`,
+          'Attempt Anyway',
+          'Cancel'
+        );
+        if (proceed !== 'Attempt Anyway') {
+          return;
+        }
+      }
+
+      const countStr = await vscode.window.showInputBox({
+        prompt: `How many independent worker Boxes should be forked from "${chk.name}"? (1-50)`,
+        value: '3',
+        validateInput: (v) => {
+          const n = parseInt(v, 10);
+          if (isNaN(n) || !/^\d+$/.test(v.trim()) || n < 1 || n > 50) {
+            return 'Enter an integer between 1 and 50';
+          }
+          return null;
+        }
+      });
+      if (!countStr) {
+        return;
+      }
+      const count = parseInt(countStr.trim(), 10);
+
+      const defaultPrefix = `${(chk.name || 'worker').replace(/[^A-Za-z0-9._-]/g, '-')}-worker`;
+      const prefixInput = await vscode.window.showInputBox({
+        prompt: 'Enter worker name prefix (workers will be named <prefix>-1, <prefix>-2, ...)',
+        value: defaultPrefix
+      });
+      if (prefixInput === undefined) {
+        return;
+      }
+      const prefix = prefixInput.trim() || 'worker';
+
+      let succeeded = 0;
+      const failures: string[] = [];
+
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Forking ${count} worker Box${count === 1 ? '' : 'es'} from "${chk.name}"...`
+        },
+        async () => {
+          const tasks = Array.from({ length: count }, (_, idx) => {
+            const workerName = `${prefix}-${idx + 1}`;
+            return bridge.createBox({ checkpoint: chk.id, name: workerName });
+          });
+          const results = await Promise.allSettled(tasks);
+          for (const res of results) {
+            if (res.status === 'fulfilled') {
+              succeeded++;
+            } else {
+              failures.push(res.reason?.message || String(res.reason));
+            }
+          }
+        }
+      );
+
+      treeProvider.refresh();
+
+      if (failures.length === 0) {
+        await vscode.window.showInformationMessage(
+          `Forked ${succeeded} worker Box${succeeded === 1 ? '' : 'es'} from checkpoint "${chk.name}".`
+        );
+      } else if (succeeded > 0) {
+        await vscode.window.showWarningMessage(
+          `Forked ${succeeded}/${count} worker Boxes from "${chk.name}". ${failures.length} failed: ${failures[0]}`
+        );
+      } else {
+        await vscode.window.showErrorMessage(
+          `Failed to fork worker Boxes from "${chk.name}": ${failures[0]}`
+        );
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.inspectCheckpoint', async (item?: any) => {
+      const chk = await resolveCheckpoint(item, bridge);
+      if (!chk) {
+        return;
+      }
+
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Inspecting checkpoint ${chk.id}...`
+        },
+        async () => {
+          try {
+            const inspected = await bridge.inspectCheckpoint(chk.id);
+            const doc = await vscode.workspace.openTextDocument({
+              content: JSON.stringify(inspected, null, 2),
+              language: 'json'
+            });
+            await vscode.window.showTextDocument(doc, { preview: true });
+          } catch (e: any) {
+            vscode.window.showErrorMessage(`Failed to inspect checkpoint: ${e.message}`);
+          }
+        }
+      );
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.copyCheckpointId', async (item?: any) => {
+      const chk = await resolveCheckpoint(item, bridge);
+      if (chk) {
+        await vscode.env.clipboard.writeText(chk.id);
+        vscode.window.showInformationMessage(`Checkpoint ID "${chk.id}" copied to clipboard.`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.copyCheckpointName', async (item?: any) => {
+      const chk = await resolveCheckpoint(item, bridge);
+      if (chk) {
+        await vscode.env.clipboard.writeText(chk.name);
+        vscode.window.showInformationMessage(`Checkpoint name "${chk.name}" copied to clipboard.`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.deleteCheckpoint', async (item?: any) => {
+      const chk = await resolveCheckpoint(item, bridge);
+      if (!chk) {
+        return;
+      }
+
+      const confirm = await vscode.window.showWarningMessage(
+        `Are you sure you want to delete checkpoint "${chk.name}" (${chk.id})?\nBoxes already created from it remain intact, but you will no longer be able to restore from this checkpoint.`,
+        { modal: true },
+        'Delete',
+        'Delete (Force)',
+        'Cancel'
+      );
+
+      if (confirm !== 'Delete' && confirm !== 'Delete (Force)') {
+        return;
+      }
+
+      const force = confirm === 'Delete (Force)';
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Deleting checkpoint ${chk.name}...`
+        },
+        async () => {
+          try {
+            await bridge.removeCheckpoint(chk.id, force);
+            checkpointsProvider?.refresh();
+            vscode.window.showInformationMessage(`Checkpoint "${chk.name}" deleted successfully.`);
+          } catch (e: any) {
+            const diag = diagnoseError(e.message);
+            const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
+            vscode.window.showErrorMessage(`Failed to delete checkpoint: ${msg}`);
+          }
+        }
+      );
+    })
+  );
 }
 
 async function resolveBoxId(item?: any, bridge?: BoxLiteBridgeClient): Promise<string | undefined> {
@@ -1401,4 +1836,63 @@ async function resolveImageName(item?: any, bridge?: BoxLiteBridgeClient): Promi
     placeHolder: 'Select an Image'
   });
   return picked?.label;
+}
+
+async function resolveCheckpoint(
+  item?: any,
+  bridge?: BoxLiteBridgeClient
+): Promise<CheckpointItem | undefined> {
+  if (item instanceof CheckpointTreeItem) {
+    return item.checkpoint;
+  }
+  if (item && item.checkpoint) {
+    return item.checkpoint;
+  }
+  if (item && item.checkpointKey) {
+    return {
+      id: item.checkpointKey,
+      name: item.label || item.checkpointKey,
+      sourceBoxId: '',
+      state: 'ready'
+    };
+  }
+  if (item && item.id && item.sourceBoxId !== undefined) {
+    return item as CheckpointItem;
+  }
+  if (typeof item === 'string' && item.trim().length > 0) {
+    return {
+      id: item.trim(),
+      name: item.trim(),
+      sourceBoxId: '',
+      state: 'ready'
+    };
+  }
+  if (!bridge) {
+    return undefined;
+  }
+  try {
+    const checkpoints = await bridge.listCheckpoints();
+    if (checkpoints.length === 0) {
+      const create = await vscode.window.showInformationMessage(
+        'No checkpoints found. Would you like to create one from a Box?',
+        'Create Checkpoint'
+      );
+      if (create === 'Create Checkpoint') {
+        await vscode.commands.executeCommand('boxlite.createCheckpoint');
+      }
+      return undefined;
+    }
+    const picked = await vscode.window.showQuickPick(
+      checkpoints.map((c) => ({
+        label: c.name || c.id,
+        description: `${c.state || 'ready'} · ${c.id}`,
+        checkpoint: c
+      })),
+      { placeHolder: 'Select a Checkpoint' }
+    );
+    return picked?.checkpoint;
+  } catch (e: any) {
+    vscode.window.showErrorMessage(`Failed to list checkpoints: ${e.message}`);
+    return undefined;
+  }
 }

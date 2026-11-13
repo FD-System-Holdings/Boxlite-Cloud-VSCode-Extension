@@ -12,6 +12,7 @@ import os
 import sys
 import traceback
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
@@ -322,6 +323,48 @@ class RestRuntimeFallback:
             body["repository_prefix"] = repository_prefix
         return await loop.run_in_executor(None, self._request, "POST", "/images/registries", body)
 
+    async def list_checkpoints(self) -> List[Dict[str, Any]]:
+        loop = asyncio.get_running_loop()
+        checkpoints: List[Dict[str, Any]] = []
+        page_token: Optional[str] = None
+        while True:
+            path = "/checkpoints"
+            if page_token:
+                path = f"/checkpoints?pageToken={urllib.parse.quote(page_token, safe='')}"
+            res = await loop.run_in_executor(None, self._request, "GET", path)
+            if isinstance(res, dict):
+                page_items = res.get("checkpoints")
+                if isinstance(page_items, list):
+                    checkpoints.extend(page_items)
+                next_token = res.get("next_page_token") or res.get("nextPageToken")
+                if not next_token:
+                    break
+                page_token = next_token
+            elif isinstance(res, list):
+                checkpoints.extend(res)
+                break
+            else:
+                break
+        return checkpoints
+
+    async def get_checkpoint(self, key: str) -> Dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        encoded_key = urllib.parse.quote(key, safe="")
+        return await loop.run_in_executor(None, self._request, "GET", f"/checkpoints/{encoded_key}")
+
+    async def create_checkpoint(self, source_box_id: str, name: Optional[str] = None) -> Dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        body: Dict[str, Any] = {"source_box_id": source_box_id}
+        if name:
+            body["name"] = name
+        return await loop.run_in_executor(None, self._request, "POST", "/checkpoints", body)
+
+    async def remove_checkpoint(self, key: str, force: bool = False) -> None:
+        loop = asyncio.get_running_loop()
+        encoded_key = urllib.parse.quote(key, safe="")
+        path = f"/checkpoints/{encoded_key}?force=true" if force else f"/checkpoints/{encoded_key}"
+        await loop.run_in_executor(None, self._request, "DELETE", path)
+
 
 class BoxLiteBridge:
     def __init__(self):
@@ -440,6 +483,51 @@ class BoxLiteBridge:
     async def handle_create_box(self, args: Dict[str, Any]) -> Dict[str, Any]:
         rt = self.ensure_runtime()
         name = args.get("name")
+        checkpoint = args.get("checkpoint") or args.get("checkpointId") or args.get("checkpoint_id")
+        if checkpoint:
+            # Restored boxes inherit all saved execution/resource/lifecycle/network settings.
+            # BoxLite Cloud rejects any creation option other than checkpoint_id and optional name.
+            if isinstance(rt, RestRuntimeFallback):
+                rest_kwargs: Dict[str, Any] = {"checkpoint_id": checkpoint}
+                if name:
+                    rest_kwargs["name"] = name
+                res = await rt.create(**rest_kwargs)
+                box_id = res.get("box_id") or res.get("id") or name or checkpoint
+                await rt.start(box_id)
+                box = RestBoxFallback(rt, box_id, name or box_id)
+                self.boxes[box_id] = box
+                return {"boxId": box_id, "name": name or box_id, "status": "running"}
+
+            try:
+                import boxlite
+                create_kwargs: Dict[str, Any] = {}
+                if name:
+                    create_kwargs["name"] = name
+                box = await rt.create(boxlite.BoxOptions(checkpoint=checkpoint), **create_kwargs)
+                await box.start()
+                box_id = box.id
+                self.boxes[box_id] = box
+                return {
+                    "boxId": box_id,
+                    "name": name or getattr(box, "name", None) or box_id,
+                    "status": "running"
+                }
+            except TypeError as e:
+                log_debug(f"BoxOptions(checkpoint=...) not supported in installed wheel ({e}); falling back to REST")
+                fallback = RestRuntimeFallback(
+                    os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+                    os.environ.get("BOXLITE_API_KEY", "")
+                )
+                rest_kwargs = {"checkpoint_id": checkpoint}
+                if name:
+                    rest_kwargs["name"] = name
+                res = await fallback.create(**rest_kwargs)
+                box_id = res.get("box_id") or res.get("id") or name or checkpoint
+                await fallback.start(box_id)
+                box = RestBoxFallback(fallback, box_id, name or box_id)
+                self.boxes[box_id] = box
+                return {"boxId": box_id, "name": name or box_id, "status": "running"}
+
         image = args.get("image", "python")
         auto_remove = args.get("autoRemove", False)
         auto_stop = args.get("autoStop", args.get("auto_stop", 0))
@@ -1149,6 +1237,152 @@ class BoxLiteBridge:
         )
         await fallback.create_registry_login(registry_host, username, password, prefix)
         return {"success": True, "registryHost": registry_host}
+
+    def _format_checkpoint(self, c: Any) -> Dict[str, Any]:
+        if isinstance(c, dict):
+            c_id = c.get("id") or c.get("checkpoint_id") or ""
+            c_name = c.get("name") or c_id
+            c_source = c.get("source_box_id") or c.get("sourceBoxId") or ""
+            c_state = c.get("state") or "ready"
+            c_created = c.get("created_at") or c.get("createdAt")
+            c_size = c.get("size_bytes") if c.get("size_bytes") is not None else c.get("sizeBytes")
+            c_error = c.get("error_reason") or c.get("errorReason")
+        else:
+            c_id = getattr(c, "id", None) or getattr(c, "checkpoint_id", "") or str(c)
+            c_name = getattr(c, "name", "") or c_id
+            c_source = getattr(c, "source_box_id", None) or getattr(c, "sourceBoxId", "") or ""
+            c_state = getattr(c, "state", "ready")
+            c_created = getattr(c, "created_at", None) or getattr(c, "createdAt", None)
+            if hasattr(c_created, "to_rfc3339"):
+                c_created = c_created.to_rfc3339()
+            elif hasattr(c_created, "isoformat"):
+                c_created = c_created.isoformat()
+            elif c_created is not None:
+                c_created = str(c_created)
+            c_size = getattr(c, "size_bytes", None)
+            if c_size is None:
+                c_size = getattr(c, "sizeBytes", None)
+            c_error = getattr(c, "error_reason", None) or getattr(c, "errorReason", None)
+
+        item: Dict[str, Any] = {
+            "id": c_id,
+            "name": c_name,
+            "sourceBoxId": c_source,
+            "state": str(c_state).lower().strip() if c_state else "ready",
+            "createdAt": c_created,
+            "sizeBytes": c_size if c_size is not None else 0,
+        }
+        if c_error:
+            item["errorReason"] = c_error
+        return item
+
+    def _get_checkpoint_handle(self, rt: Any) -> Any:
+        if hasattr(rt, "checkpoints"):
+            attr = getattr(rt, "checkpoints")
+            return attr() if callable(attr) else attr
+        return None
+
+    async def handle_list_checkpoints(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        checkpoints = None
+        handle = self._get_checkpoint_handle(rt)
+        if handle is not None and hasattr(handle, "list") and callable(handle.list):
+            try:
+                checkpoints = await handle.list()
+            except Exception as e:
+                log_debug(f"rt.checkpoints.list() failed ({e}), falling back to REST")
+
+        if checkpoints is None:
+            if isinstance(rt, RestRuntimeFallback):
+                checkpoints = await rt.list_checkpoints()
+            else:
+                fallback = RestRuntimeFallback(
+                    os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+                    os.environ.get("BOXLITE_API_KEY", "")
+                )
+                checkpoints = await fallback.list_checkpoints()
+
+        return {"checkpoints": [self._format_checkpoint(c) for c in (checkpoints or [])]}
+
+    async def handle_create_checkpoint(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        source_box_id = args["sourceBoxId"]
+        name = args.get("name")
+
+        handle = self._get_checkpoint_handle(rt)
+        if handle is not None and hasattr(handle, "create") and callable(handle.create):
+            try:
+                if name:
+                    info = await handle.create(source_box_id, name=name)
+                else:
+                    info = await handle.create(source_box_id)
+                return self._format_checkpoint(info)
+            except Exception as e:
+                log_debug(f"rt.checkpoints.create() failed ({e}), falling back to REST")
+
+        if isinstance(rt, RestRuntimeFallback):
+            res = await rt.create_checkpoint(source_box_id, name=name)
+            return self._format_checkpoint(res)
+
+        fallback = RestRuntimeFallback(
+            os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+            os.environ.get("BOXLITE_API_KEY", "")
+        )
+        res = await fallback.create_checkpoint(source_box_id, name=name)
+        return self._format_checkpoint(res)
+
+    async def handle_inspect_checkpoint(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        key = args["checkpointKey"]
+
+        handle = self._get_checkpoint_handle(rt)
+        if handle is not None and hasattr(handle, "get") and callable(handle.get):
+            try:
+                info = await handle.get(key)
+                if hasattr(info, "to_dict"):
+                    data = info.to_dict()
+                elif hasattr(info, "__dict__"):
+                    data = {k: v for k, v in info.__dict__.items() if not k.startswith("_")}
+                else:
+                    data = self._format_checkpoint(info)
+                return {"checkpoint": data}
+            except Exception as e:
+                log_debug(f"rt.checkpoints.get() failed ({e}), falling back to REST")
+
+        if isinstance(rt, RestRuntimeFallback):
+            res = await rt.get_checkpoint(key)
+            return {"checkpoint": res}
+
+        fallback = RestRuntimeFallback(
+            os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+            os.environ.get("BOXLITE_API_KEY", "")
+        )
+        res = await fallback.get_checkpoint(key)
+        return {"checkpoint": res}
+
+    async def handle_remove_checkpoint(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        key = args["checkpointKey"]
+        force = bool(args.get("force", False))
+
+        handle = self._get_checkpoint_handle(rt)
+        if handle is not None and hasattr(handle, "remove") and callable(handle.remove):
+            try:
+                await handle.remove(key, force=force)
+                return {"checkpointKey": key, "removed": True}
+            except Exception as e:
+                log_debug(f"rt.checkpoints.remove() failed ({e}), falling back to REST")
+
+        if isinstance(rt, RestRuntimeFallback):
+            await rt.remove_checkpoint(key, force=force)
+            return {"checkpointKey": key, "removed": True}
+
+        fallback = RestRuntimeFallback(
+            os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+            os.environ.get("BOXLITE_API_KEY", "")
+        )
+        await fallback.remove_checkpoint(key, force=force)
+        return {"checkpointKey": key, "removed": True}
 
     async def dispatch(self, req: Dict[str, Any]):
         req_id = req.get("id", "none")

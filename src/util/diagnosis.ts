@@ -76,6 +76,46 @@ export function diagnoseError(errorMessage: string, code?: string): DiagnosticMe
     };
   }
 
+  if (lower.includes('checkpoint')) {
+    if (lower.includes('stopped') || lower.includes('idle')) {
+      return {
+        summary: 'Checkpoint Capture Requires Stopped Source Box',
+        checklist: [
+          'Stop the source box and wait until its status reaches "stopped" before creating a checkpoint',
+          'Wait for any pending operations on the source box to complete',
+          'Keep the source box stopped and intact until the checkpoint reaches "ready"'
+        ]
+      };
+    }
+    if (lower.includes('volume') || lower.includes('secret')) {
+      return {
+        summary: 'Source Box Attachments Not Supported for Checkpoints',
+        checklist: [
+          'A source box cannot have attached managed volumes or Secrets when creating a checkpoint',
+          'Create a source box without volumes or Secrets, prepare its root disk, stop it, and capture the checkpoint'
+        ]
+      };
+    }
+    if (lower.includes('limit') || lower.includes('quota')) {
+      return {
+        summary: 'Checkpoint Quota / Limit Reached',
+        checklist: [
+          'List your checkpoints in the Checkpoints explorer and delete unneeded checkpoints',
+          'Check your organization checkpoint quota before capturing another box'
+        ]
+      };
+    }
+    if (lower.includes('being created') || lower.includes('in use') || lower.includes('being used')) {
+      return {
+        summary: 'Checkpoint Operation In Progress',
+        checklist: [
+          'Wait for the active capture or restore operation to finish before deleting or reusing the checkpoint',
+          'If a box restoration failed, remove the failed target box before retrying checkpoint deletion'
+        ]
+      };
+    }
+  }
+
   return {
     summary: 'Operation Failed',
     checklist: [

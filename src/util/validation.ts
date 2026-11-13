@@ -256,3 +256,40 @@ export function validateRepositoryPrefix(prefix: string): { valid: boolean; erro
   }
   return { valid: true };
 }
+
+export function validateCheckpointName(name: string): { valid: boolean; error?: string } {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return { valid: false, error: 'Checkpoint name cannot be empty.' };
+  }
+  if (trimmed.length > 128) {
+    return { valid: false, error: 'Checkpoint name cannot exceed 128 characters.' };
+  }
+  const nameRegex = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+  if (!nameRegex.test(trimmed)) {
+    return {
+      valid: false,
+      error:
+        'Checkpoint name must start with a letter or digit and contain only letters, digits, dots (.), underscores (_), or hyphens (-).'
+    };
+  }
+  return { valid: true };
+}
+
+export function validateCheckpointBoxOptions(
+  checkpoint?: string,
+  hasOverrides?: boolean
+): { valid: boolean; error?: string } {
+  const trimmed = checkpoint?.trim();
+  if (!trimmed) {
+    return { valid: false, error: 'Checkpoint ID or name cannot be empty.' };
+  }
+  if (hasOverrides) {
+    return {
+      valid: false,
+      error:
+        'Restored boxes inherit saved settings from the checkpoint; do not pass image, resource, network, volume, or lifecycle overrides.'
+    };
+  }
+  return { valid: true };
+}

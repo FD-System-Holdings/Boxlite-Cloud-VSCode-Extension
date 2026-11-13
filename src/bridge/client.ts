@@ -17,7 +17,9 @@ import {
   ImageDetail,
   RegistryLoginArgs,
   CreateImageAliasArgs,
-  DeleteImageAliasArgs
+  DeleteImageAliasArgs,
+  CheckpointItem,
+  CreateCheckpointArgs
 } from './protocol';
 import { CredentialsManager } from '../auth/credentials';
 import { PythonEnvManager } from './env';
@@ -297,6 +299,32 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
 
   public async createRegistryLogin(args: RegistryLoginArgs): Promise<{ success: boolean; registryHost: string }> {
     return this.sendRequest('create_registry_login', args, 30000);
+  }
+
+  // Checkpoint Operations
+  public async listCheckpoints(): Promise<CheckpointItem[]> {
+    const res = await this.sendRequest<{ checkpoints: CheckpointItem[] }>('list_checkpoints', {}, 20000);
+    return res.checkpoints || [];
+  }
+
+  public async createCheckpoint(args: CreateCheckpointArgs): Promise<CheckpointItem> {
+    return this.sendRequest<CheckpointItem>('create_checkpoint', args, 60000);
+  }
+
+  public async inspectCheckpoint(checkpointKey: string): Promise<any> {
+    const res = await this.sendRequest<{ checkpoint: any }>('inspect_checkpoint', { checkpointKey }, 20000);
+    return res.checkpoint;
+  }
+
+  public async removeCheckpoint(
+    checkpointKey: string,
+    force = false
+  ): Promise<{ checkpointKey: string; removed: boolean }> {
+    return this.sendRequest<{ checkpointKey: string; removed: boolean }>(
+      'remove_checkpoint',
+      { checkpointKey, force },
+      30000
+    );
   }
 
   public restartBridge() {
