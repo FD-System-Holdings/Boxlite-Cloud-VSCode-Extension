@@ -20,12 +20,48 @@ interface ProxySecretsPayload {
 
 export class SecretsManager {
   private secretStorage: vscode.SecretStorage;
+  private cachedPayload?: ProxySecretsPayload;
+  private loadPromise?: Promise<ProxySecretsPayload>;
 
   constructor(context: vscode.ExtensionContext) {
     this.secretStorage = context.secrets;
   }
 
+  public invalidateCache(): void {
+    this.cachedPayload = undefined;
+    this.loadPromise = undefined;
+  }
+
+  private clonePayload(payload: ProxySecretsPayload): ProxySecretsPayload {
+    return {
+      secrets: (payload.secrets || []).map((s) => ({
+        ...s,
+        hosts: [...(s.hosts || [])],
+        headers: { ...(s.headers || {}) }
+      }))
+    };
+  }
+
   private async load(): Promise<ProxySecretsPayload> {
+    if (this.cachedPayload) {
+      return this.clonePayload(this.cachedPayload);
+    }
+
+    if (this.loadPromise) {
+      return this.clonePayload(await this.loadPromise);
+    }
+
+    this.loadPromise = this.performLoad();
+    try {
+      const loaded = await this.loadPromise;
+      this.cachedPayload = this.clonePayload(loaded);
+      return this.clonePayload(loaded);
+    } finally {
+      this.loadPromise = undefined;
+    }
+  }
+
+  private async performLoad(): Promise<ProxySecretsPayload> {
     try {
       const raw = await this.secretStorage.get(SECRET_KEY_PROXY_SECRETS);
       if (raw) {
@@ -35,13 +71,18 @@ export class SecretsManager {
         }
       }
     } catch {
-      // Ignore malformed storage payload
+      // Ignore malformed storage payload or transient SecretStorage errors
     }
     return { secrets: [] };
   }
 
   private async save(payload: ProxySecretsPayload): Promise<void> {
-    await this.secretStorage.store(SECRET_KEY_PROXY_SECRETS, JSON.stringify(payload));
+    this.cachedPayload = this.clonePayload(payload);
+    try {
+      await this.secretStorage.store(SECRET_KEY_PROXY_SECRETS, JSON.stringify(payload));
+    } catch {
+      // Preserve in-memory cache if SecretStorage IPC is unavailable
+    }
   }
 
   public async listSecrets(): Promise<StoredProxySecret[]> {

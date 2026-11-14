@@ -13,11 +13,16 @@ export class CheckpointsTreeDataProvider implements vscode.TreeDataProvider<BoxL
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private cachedCheckpoints: CheckpointTreeItem[] = [];
+  private startupReady = true;
 
   constructor(
     private bridge: BoxLiteBridgeClient,
     private credentials: CredentialsManager
   ) {}
+
+  public setStartupReady(ready: boolean): void {
+    this.startupReady = ready;
+  }
 
   public refresh(): void {
     this._onDidChangeTreeData.fire();
@@ -28,6 +33,10 @@ export class CheckpointsTreeDataProvider implements vscode.TreeDataProvider<BoxL
   }
 
   public async getChildren(element?: BoxLiteTreeItem): Promise<BoxLiteTreeItem[]> {
+    if (!this.startupReady) {
+      return [];
+    }
+
     if (!element) {
       const items: BoxLiteTreeItem[] = [];
       const apiKey = await this.credentials.getApiKey();

@@ -26,7 +26,7 @@ import {
 import { CredentialsManager } from '../auth/credentials';
 import { PythonEnvManager } from './env';
 import { diagnoseError } from '../util/diagnosis';
-import { parseExecutableCommand } from '../util/process';
+import { parseExecutableCommand, createCleanSubprocessEnv } from '../util/process';
 
 export class BoxLiteBridgeClient implements vscode.Disposable {
   private process: ChildProcess | null = null;
@@ -38,8 +38,10 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
       timer: NodeJS.Timeout;
     }
   >();
+  private inFlightReads = new Map<string, Promise<any>>();
   private requestCounter = 0;
   private startPromise: Promise<ChildProcess> | null = null;
+  private isDisposed = false;
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -47,6 +49,32 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
     private envManager: PythonEnvManager,
     private outputChannel: vscode.OutputChannel
   ) {}
+
+  private safeLog(message: string): void {
+    if (this.isDisposed) {
+      return;
+    }
+    try {
+      this.outputChannel.appendLine(message);
+    } catch {
+      // Ignore writes after output channel disposal
+    }
+  }
+
+  private coalesceRead<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const existing = this.inFlightReads.get(key) as Promise<T> | undefined;
+    if (existing) {
+      return existing;
+    }
+
+    const promise = fn().finally(() => {
+      if (this.inFlightReads.get(key) === promise) {
+        this.inFlightReads.delete(key);
+      }
+    });
+    this.inFlightReads.set(key, promise);
+    return promise;
+  }
 
   public async getBridgeScriptPath(): Promise<string> {
     const candidates = [
@@ -79,42 +107,45 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
   }
 
   private async spawnBridgeProcess(): Promise<ChildProcess> {
+    if (this.isDisposed) {
+      throw new Error('Bridge client is disposed');
+    }
+
     const apiKey = await this.credentials.getApiKey();
     const restUrl = this.credentials.getRestUrl();
     const pythonPath = await this.envManager.getPythonPath();
     const scriptPath = await this.getBridgeScriptPath();
 
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
+    if (this.isDisposed) {
+      throw new Error('Bridge client is disposed');
+    }
+
+    const env = createCleanSubprocessEnv({
       BOXLITE_API_KEY: apiKey || '',
       BOXLITE_REST_URL: restUrl,
       PYTHONUNBUFFERED: '1',
       PYTHONUTF8: '1'
-    };
-    delete env.NODE_OPTIONS;
-    delete env.VSCODE_INSPECTOR_OPTIONS;
-    delete env.ELECTRON_RUN_AS_NODE;
+    });
 
     const { bin, args: parsedArgs } = parseExecutableCommand(pythonPath);
     const args = parsedArgs.concat([scriptPath]);
 
-    this.outputChannel.appendLine(`[bridge] Starting python bridge: ${bin} ${args.join(' ')}`);
+    this.safeLog(`[bridge] Starting python bridge: ${bin} ${args.join(' ')}`);
 
     const proc = spawn(bin, args, {
       env,
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true
     });
 
     proc.on('error', (err) => {
-      this.outputChannel.appendLine(`[bridge] Process error: ${err.message}`);
+      this.safeLog(`[bridge] Process error: ${err.message}`);
       this.rejectAllPending(err);
       this.process = null;
     });
 
     proc.on('exit', (code, signal) => {
-      this.outputChannel.appendLine(
-        `[bridge] Process exited with code ${code}, signal ${signal}`
-      );
+      this.safeLog(`[bridge] Process exited with code ${code}, signal ${signal}`);
       this.rejectAllPending(new Error(`Bridge process exited with code ${code}`));
       this.process = null;
     });
@@ -122,7 +153,7 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
     if (proc.stderr) {
       const stderrRl = readline.createInterface({ input: proc.stderr });
       stderrRl.on('line', (line) => {
-        this.outputChannel.appendLine(`[bridge:py] ${line}`);
+        this.safeLog(`[bridge:py] ${line}`);
       });
     }
 
@@ -163,7 +194,7 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
         }
       }
     } catch (e: any) {
-      this.outputChannel.appendLine(`[bridge] Unrecognized output: ${trimmed}`);
+      this.safeLog(`[bridge] Unrecognized output: ${trimmed}`);
     }
   }
 
@@ -202,8 +233,10 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
 
   // BoxLite Cloud API Methods
   public async listBoxes(): Promise<BoxListItem[]> {
-    const res = await this.sendRequest<{ boxes: BoxListItem[] }>('list_boxes', {}, 20000);
-    return res.boxes || [];
+    return this.coalesceRead('list_boxes', async () => {
+      const res = await this.sendRequest<{ boxes: BoxListItem[] }>('list_boxes', {}, 20000);
+      return res.boxes || [];
+    });
   }
 
   public async inspectBox(boxId: string): Promise<any> {
@@ -259,8 +292,10 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
 
   // Volume Operations
   public async listVolumes(): Promise<VolumeItem[]> {
-    const res = await this.sendRequest<{ volumes: VolumeItem[] }>('list_volumes', {}, 20000);
-    return res.volumes || [];
+    return this.coalesceRead('list_volumes', async () => {
+      const res = await this.sendRequest<{ volumes: VolumeItem[] }>('list_volumes', {}, 20000);
+      return res.volumes || [];
+    });
   }
 
   public async createVolume(args: CreateVolumeArgs = {}): Promise<VolumeItem> {
@@ -278,8 +313,10 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
 
   // Image Operations
   public async listImages(): Promise<{ images: ImageItem[]; usage?: ImageUsage }> {
-    const res = await this.sendRequest<{ images: ImageItem[]; usage?: ImageUsage }>('list_images', {}, 20000);
-    return res || { images: [] };
+    return this.coalesceRead('list_images', async () => {
+      const res = await this.sendRequest<{ images: ImageItem[]; usage?: ImageUsage }>('list_images', {}, 20000);
+      return res || { images: [] };
+    });
   }
 
   public async inspectImage(name: string): Promise<ImageDetail> {
@@ -305,8 +342,10 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
 
   // Checkpoint Operations
   public async listCheckpoints(): Promise<CheckpointItem[]> {
-    const res = await this.sendRequest<{ checkpoints: CheckpointItem[] }>('list_checkpoints', {}, 20000);
-    return res.checkpoints || [];
+    return this.coalesceRead('list_checkpoints', async () => {
+      const res = await this.sendRequest<{ checkpoints: CheckpointItem[] }>('list_checkpoints', {}, 20000);
+      return res.checkpoints || [];
+    });
   }
 
   public async createCheckpoint(args: CreateCheckpointArgs): Promise<CheckpointItem> {
@@ -337,6 +376,7 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
   }
 
   public restartBridge() {
+    this.inFlightReads.clear();
     if (this.process) {
       try {
         this.process.kill();
@@ -349,6 +389,7 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
   }
 
   public dispose() {
+    this.isDisposed = true;
     this.restartBridge();
     this.rejectAllPending(new Error('Bridge disposed'));
   }

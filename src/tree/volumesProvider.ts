@@ -12,11 +12,16 @@ export class VolumesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteT
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private cachedVolumes: VolumeTreeItem[] = [];
+  private startupReady = true;
 
   constructor(
     private bridge: BoxLiteBridgeClient,
     private credentials: CredentialsManager
   ) {}
+
+  public setStartupReady(ready: boolean): void {
+    this.startupReady = ready;
+  }
 
   public refresh(): void {
     this._onDidChangeTreeData.fire();
@@ -27,6 +32,10 @@ export class VolumesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteT
   }
 
   public async getChildren(element?: BoxLiteTreeItem): Promise<BoxLiteTreeItem[]> {
+    if (!this.startupReady) {
+      return [];
+    }
+
     if (!element) {
       // Root level: Volume nodes
       const items: BoxLiteTreeItem[] = [];

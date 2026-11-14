@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
-import { parseExecutableCommand } from '../util/process';
+import { parseExecutableCommand, createCleanSubprocessEnv } from '../util/process';
 
 export class PythonEnvManager {
   private outputChannel: vscode.OutputChannel;
@@ -58,16 +58,29 @@ export class PythonEnvManager {
       : path.join(storagePath, '.venv', 'bin', 'python');
   }
 
+  private safeAppendLine(message: string): void {
+    try {
+      this.outputChannel.appendLine(message);
+    } catch {
+      // Ignore writes after output channel disposal
+    }
+  }
+
+  private safeAppend(message: string): void {
+    try {
+      this.outputChannel.append(message);
+    } catch {
+      // Ignore writes after output channel disposal
+    }
+  }
+
   private async testExecutable(execName: string): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       try {
         const { bin, args } = parseExecutableCommand(execName);
         const fullArgs = args.concat(['-c', 'import sys; print(sys.version_info[0])']);
-        const env = { ...process.env };
-        delete env.NODE_OPTIONS;
-        delete env.VSCODE_INSPECTOR_OPTIONS;
-        delete env.ELECTRON_RUN_AS_NODE;
-        const proc = spawn(bin, fullArgs, { stdio: 'pipe', env });
+        const env = createCleanSubprocessEnv();
+        const proc = spawn(bin, fullArgs, { stdio: 'pipe', env, windowsHide: true });
         let out = '';
         proc.stdout.on('data', (d) => { out += d.toString(); });
         proc.on('close', (code) => {
@@ -89,8 +102,12 @@ export class PythonEnvManager {
     const venvDir = path.join(storagePath, '.venv');
     const pythonExecutable = this.getGlobalStorageVenvPython();
 
-    this.outputChannel.show(true);
-    this.outputChannel.appendLine(`[setup] Setting up managed Python virtual environment in ${venvDir}...`);
+    try {
+      this.outputChannel.show(true);
+    } catch {
+      // Ignore if channel unavailable
+    }
+    this.safeAppendLine(`[setup] Setting up managed Python virtual environment in ${venvDir}...`);
 
     return vscode.window.withProgress(
       {
@@ -139,12 +156,12 @@ export class PythonEnvManager {
             );
           }
         } catch (pipErr: any) {
-          this.outputChannel.appendLine(
+          this.safeAppendLine(
             `[setup] Notice: Native boxlite wheel installation was skipped or failed (${pipErr.message}). Pure-Python REST bridge fallback will be used.`
           );
         }
 
-        this.outputChannel.appendLine('[setup] Python environment setup complete!');
+        this.safeAppendLine('[setup] Python environment setup complete!');
         vscode.window.showInformationMessage('BoxLite Python environment successfully configured.');
         return pythonExecutable;
       }
@@ -153,24 +170,25 @@ export class PythonEnvManager {
 
   private runProcess(cmd: string, args: string[], stepName: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.outputChannel.appendLine(`[setup] ${stepName}: ${cmd} ${args.join(' ')}`);
-      const proc = spawn(cmd, args, { stdio: 'pipe' });
+      this.safeAppendLine(`[setup] ${stepName}: ${cmd} ${args.join(' ')}`);
+      const env = createCleanSubprocessEnv();
+      const proc = spawn(cmd, args, { stdio: 'pipe', env, windowsHide: true });
 
-      proc.stdout.on('data', (d) => this.outputChannel.append(d.toString()));
-      proc.stderr.on('data', (d) => this.outputChannel.append(d.toString()));
+      proc.stdout.on('data', (d) => this.safeAppend(d.toString()));
+      proc.stderr.on('data', (d) => this.safeAppend(d.toString()));
 
       proc.on('close', (code) => {
         if (code === 0) {
           resolve();
         } else {
           const err = new Error(`${stepName} failed with code ${code}`);
-          this.outputChannel.appendLine(`[setup] ERROR: ${err.message}`);
+          this.safeAppendLine(`[setup] ERROR: ${err.message}`);
           reject(err);
         }
       });
 
       proc.on('error', (err) => {
-        this.outputChannel.appendLine(`[setup] ERROR: ${err.message}`);
+        this.safeAppendLine(`[setup] ERROR: ${err.message}`);
         reject(err);
       });
     });

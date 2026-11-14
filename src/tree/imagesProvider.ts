@@ -145,11 +145,16 @@ export class ImagesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTr
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private cachedBuiltins: ImageItem[] = [];
+  private startupReady = true;
 
   constructor(
     private bridge: BoxLiteBridgeClient,
     private credentials: CredentialsManager
   ) {}
+
+  public setStartupReady(ready: boolean): void {
+    this.startupReady = ready;
+  }
 
   public refresh(): void {
     this._onDidChangeTreeData.fire();
@@ -160,6 +165,10 @@ export class ImagesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTr
   }
 
   public async getChildren(element?: BoxLiteTreeItem): Promise<BoxLiteTreeItem[]> {
+    if (!this.startupReady) {
+      return [];
+    }
+
     if (!element) {
       // Root level: Catalog Usage + Builtin Group + Catalog & Custom Images
       const items: BoxLiteTreeItem[] = [];

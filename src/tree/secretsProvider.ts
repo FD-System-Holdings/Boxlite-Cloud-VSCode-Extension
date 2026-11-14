@@ -8,12 +8,17 @@ import { BoxLiteTreeItem, SecretTreeItem, SecretChildTreeItem, SecretTreeItemDat
 export class SecretsTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTreeItem> {
   private _onDidChangeTreeData = new vscode.EventEmitter<BoxLiteTreeItem | undefined | null | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+  private startupReady = true;
 
   constructor(
     private bridge: BoxLiteBridgeClient,
     private credentials: CredentialsManager,
     private secretsManager: SecretsManager
   ) {}
+
+  public setStartupReady(ready: boolean): void {
+    this.startupReady = ready;
+  }
 
   public refresh(): void {
     this._onDidChangeTreeData.fire();
@@ -24,6 +29,10 @@ export class SecretsTreeDataProvider implements vscode.TreeDataProvider<BoxLiteT
   }
 
   public async getChildren(element?: BoxLiteTreeItem): Promise<BoxLiteTreeItem[]> {
+    if (!this.startupReady) {
+      return [];
+    }
+
     if (!element) {
       const items: BoxLiteTreeItem[] = [];
       const apiKey = await this.credentials.getApiKey();

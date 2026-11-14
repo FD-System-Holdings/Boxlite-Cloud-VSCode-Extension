@@ -16,12 +16,45 @@ interface ApiKeysPayload {
 
 export class CredentialsManager {
   private secretStorage: vscode.SecretStorage;
+  private cachedPayload?: ApiKeysPayload;
+  private loadPromise?: Promise<ApiKeysPayload>;
 
   constructor(context: vscode.ExtensionContext) {
     this.secretStorage = context.secrets;
   }
 
+  public invalidateCache(): void {
+    this.cachedPayload = undefined;
+    this.loadPromise = undefined;
+  }
+
+  private clonePayload(payload: ApiKeysPayload): ApiKeysPayload {
+    return {
+      activeId: payload.activeId,
+      keys: payload.keys.map((k) => ({ ...k }))
+    };
+  }
+
   private async load(): Promise<ApiKeysPayload> {
+    if (this.cachedPayload) {
+      return this.clonePayload(this.cachedPayload);
+    }
+
+    if (this.loadPromise) {
+      return this.clonePayload(await this.loadPromise);
+    }
+
+    this.loadPromise = this.performLoad();
+    try {
+      const loaded = await this.loadPromise;
+      this.cachedPayload = this.clonePayload(loaded);
+      return this.clonePayload(loaded);
+    } finally {
+      this.loadPromise = undefined;
+    }
+  }
+
+  private async performLoad(): Promise<ApiKeysPayload> {
     try {
       const raw = await this.secretStorage.get(SECRET_KEY_API_KEYS);
       if (raw) {
@@ -52,7 +85,12 @@ export class CredentialsManager {
   }
 
   private async save(payload: ApiKeysPayload): Promise<void> {
-    await this.secretStorage.store(SECRET_KEY_API_KEYS, JSON.stringify(payload));
+    this.cachedPayload = this.clonePayload(payload);
+    try {
+      await this.secretStorage.store(SECRET_KEY_API_KEYS, JSON.stringify(payload));
+    } catch {
+      // Preserve in-memory cache if SecretStorage IPC is unavailable
+    }
   }
 
   public async getApiKey(): Promise<string | undefined> {

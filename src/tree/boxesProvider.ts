@@ -9,12 +9,17 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private cachedBoxes: BoxTreeItem[] = [];
+  private startupReady = true;
 
   constructor(
     private bridge: BoxLiteBridgeClient,
     private credentials: CredentialsManager,
     private logManager?: LogStreamManager
   ) {}
+
+  public setStartupReady(ready: boolean): void {
+    this.startupReady = ready;
+  }
 
   public refresh(): void {
     this._onDidChangeTreeData.fire();
@@ -25,6 +30,10 @@ export class BoxesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTre
   }
 
   public async getChildren(element?: BoxLiteTreeItem): Promise<BoxLiteTreeItem[]> {
+    if (!this.startupReady) {
+      return [];
+    }
+
     if (!element) {
       // Root level: Box nodes
       const items: BoxLiteTreeItem[] = [];
