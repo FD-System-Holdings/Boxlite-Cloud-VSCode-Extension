@@ -283,7 +283,19 @@ class RestRuntimeFallback:
         loop = asyncio.get_running_loop()
         try:
             res = await loop.run_in_executor(None, self._request, "GET", "/images")
-            images = res.get("images", res) if isinstance(res, dict) else (res if isinstance(res, list) else [])
+            if isinstance(res, dict):
+                raw_images = res.get("images")
+                if not isinstance(raw_images, list):
+                    raw_images = (
+                        res.get("items")
+                        if isinstance(res.get("items"), list)
+                        else (res.get("data") if isinstance(res.get("data"), list) else [])
+                    )
+                images = raw_images
+            elif isinstance(res, list):
+                images = res
+            else:
+                images = []
             usage = None
             try:
                 usage_res = await loop.run_in_executor(None, self._request, "GET", "/images/usage")
@@ -1192,6 +1204,92 @@ class BoxLiteBridge:
         await fallback.remove_volume(volume_id, force=force)
         return {"volumeId": volume_id, "removed": True}
 
+    def _serialize_timestamp(self, val: Any) -> Optional[str]:
+        if val is None:
+            return None
+        if isinstance(val, str):
+            return val
+        if hasattr(val, "to_rfc3339"):
+            return val.to_rfc3339()
+        if hasattr(val, "isoformat"):
+            return val.isoformat()
+        return str(val)
+
+    def _format_image_item(self, img: Any) -> Optional[Dict[str, Any]]:
+        if img is None:
+            return None
+        if isinstance(img, str):
+            name = img.strip()
+            return {"name": name} if name else None
+
+        def get_field(key: str, default: Any = None) -> Any:
+            if isinstance(img, dict):
+                return img.get(key, default)
+            return getattr(img, key, default)
+
+        name = ""
+        for field in ("name", "image_name", "imageName", "reference", "image"):
+            val = get_field(field)
+            if isinstance(val, str) and val.strip():
+                name = val.strip()
+                break
+
+        raw_tag = get_field("tag")
+        tag_str = raw_tag.strip() if isinstance(raw_tag, str) else ""
+
+        if not name:
+            raw_repo = get_field("repository")
+            if isinstance(raw_repo, str) and raw_repo.strip():
+                repo = raw_repo.strip()
+                if tag_str and tag_str != "<none>" and ":" not in repo:
+                    name = f"{repo}:{tag_str}"
+                else:
+                    name = repo
+
+        if not name:
+            raw_id = get_field("id")
+            if isinstance(raw_id, str) and raw_id.strip():
+                name = raw_id.strip()
+
+        if not name:
+            return None
+
+        raw_tags = get_field("tags")
+        if raw_tags is None:
+            raw_tags = get_field("aliases")
+        if isinstance(raw_tags, (list, tuple, set)):
+            tags = [t if isinstance(t, str) else str(t) for t in raw_tags]
+        elif tag_str and tag_str != "<none>":
+            tags = [tag_str]
+        else:
+            tags = []
+
+        box_count = get_field("boxCount")
+        if box_count is None:
+            box_count = get_field("box_count", 0)
+
+        last_used_raw = (
+            get_field("lastUsedAt")
+            or get_field("last_used_at")
+            or get_field("createdAt")
+            or get_field("created_at")
+        )
+        last_used = self._serialize_timestamp(last_used_raw)
+
+        size_bytes = get_field("sizeBytes")
+        if size_bytes is None:
+            size_bytes = get_field("size_bytes")
+
+        formatted: Dict[str, Any] = dict(img) if isinstance(img, dict) else {}
+        formatted.update({
+            "name": name,
+            "tags": tags,
+            "boxCount": box_count if box_count is not None else 0,
+            "lastUsedAt": last_used,
+            "sizeBytes": size_bytes,
+        })
+        return formatted
+
     async def handle_list_images(self, args: Dict[str, Any]) -> Dict[str, Any]:
         rt = self.ensure_runtime()
         images = []
@@ -1225,19 +1323,20 @@ class BoxLiteBridge:
             usage = fallback_res.get("usage")
 
         formatted_images = []
-        for img in images:
-            if isinstance(img, dict):
-                formatted_images.append(img)
-            elif isinstance(img, str):
-                formatted_images.append({"name": img})
-            else:
-                formatted_images.append({
-                    "name": getattr(img, "name", str(img)),
-                    "tags": getattr(img, "tags", []),
-                    "boxCount": getattr(img, "box_count", getattr(img, "boxCount", 0)),
-                    "lastUsedAt": getattr(img, "last_used_at", getattr(img, "lastUsedAt", None)),
-                    "sizeBytes": getattr(img, "size_bytes", getattr(img, "sizeBytes", None))
-                })
+        for img in (images or []):
+            item = self._format_image_item(img)
+            if item is not None:
+                formatted_images.append(item)
+
+        if isinstance(usage, dict):
+            known_bytes = usage.get("knownBytes")
+            if known_bytes is None:
+                known_bytes = usage.get("known_bytes", 0)
+            usage = {
+                "count": usage.get("count", len(formatted_images)),
+                "limit": usage.get("limit", 20),
+                "knownBytes": known_bytes if known_bytes is not None else 0,
+            }
 
         return {
             "images": formatted_images,

@@ -111,6 +111,29 @@ describe('Images List Building and Sorting', () => {
     assert.strictEqual(etcd?.boxCount, 1);
     assert.strictEqual(etcd?.recorded, true);
   });
+
+  it('should handle catalog items missing name and non-string customImageNames without throwing', () => {
+    const malformedCatalog: any[] = [
+      { repository: 'docker.io/library/alpine', tag: '3.20', size_bytes: 3630321 },
+      { image_name: 'ghcr.io/acme/worker' },
+      { name: undefined },
+      null
+    ];
+    const malformedCustom: any[] = [null, undefined, 123, 'ghcr.io/acme/custom:1.0'];
+
+    const result = buildImageList(malformedCatalog, BUILTIN_IMAGES, malformedCustom, [], 'python');
+
+    const alpine = result.catalog.find((c) => c.name === 'docker.io/library/alpine:3.20');
+    assert.ok(alpine);
+    assert.strictEqual(alpine?.sizeBytes, 3630321);
+
+    const worker = result.catalog.find((c) => c.name === 'ghcr.io/acme/worker');
+    assert.ok(worker);
+
+    assert.strictEqual(result.catalog.length, 2);
+    assert.strictEqual(result.customOnly.length, 1);
+    assert.strictEqual(result.customOnly[0].name, 'ghcr.io/acme/custom:1.0');
+  });
 });
 
 describe('Image Tree Item Presentation & Node Formatting', () => {
@@ -340,6 +363,37 @@ describe('ImagesTreeDataProvider Tree Hierarchy & Lifecycle', () => {
 
     const builtinGroup = rootItems.find((i) => i instanceof ImageGroupTreeItem);
     assert.ok(builtinGroup);
+  });
+
+  it('should succeed when listImages returns items without name or with undefined names', async () => {
+    const mockBridge: any = {
+      listImages: async () => ({
+        images: [
+          { repository: 'docker.io/library/alpine', tag: '3.20', size_bytes: 3630321 },
+          { name: undefined },
+          { imageName: 'ghcr.io/acme/service:latest' }
+        ]
+      }),
+      listBoxes: async () => []
+    };
+    const mockCredentials: any = {
+      getApiKey: async () => 'test-key',
+      getRestUrl: () => 'https://api.boxlite.ai'
+    };
+
+    const provider = new ImagesTreeDataProvider(mockBridge, mockCredentials);
+    const rootItems = await provider.getChildren();
+
+    const errorNode = rootItems.find((i) => i.label === 'Error loading images');
+    assert.strictEqual(errorNode, undefined);
+
+    const imageLabels = rootItems
+      .filter((i): i is ImageTreeItem => i instanceof ImageTreeItem)
+      .map((i) => i.image.name);
+    assert.deepStrictEqual(imageLabels, [
+      'docker.io/library/alpine:3.20',
+      'ghcr.io/acme/service:latest'
+    ]);
   });
 });
 

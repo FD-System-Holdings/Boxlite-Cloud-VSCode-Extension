@@ -1177,7 +1177,7 @@ export function registerCommands(
           try {
             const res = await bridge.listImages();
             const found = (res.images || []).some(
-              (img) => img.name.toLowerCase() === imageRef.toLowerCase()
+              (img) => typeof img?.name === 'string' && img.name.toLowerCase() === imageRef.toLowerCase()
             );
             if (found || pollAttempts >= 8) {
               clearInterval(pollInterval);
@@ -2271,6 +2271,9 @@ async function resolveImageName(item?: any, bridge?: BoxLiteBridgeClient): Promi
     try {
       const res = await bridge.listImages();
       for (const img of res.images || []) {
+        if (!img?.name || typeof img.name !== 'string') {
+          continue;
+        }
         if (!choices.some((c) => c.label.toLowerCase() === img.name.toLowerCase())) {
           choices.push({
             label: img.name,

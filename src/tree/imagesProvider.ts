@@ -20,6 +20,32 @@ export interface BuildImageListResult {
   all: ImageItem[];
 }
 
+export function extractImageName(raw: any): string {
+  if (!raw) {
+    return '';
+  }
+  if (typeof raw === 'string') {
+    return raw.trim();
+  }
+  for (const candidate of [raw.name, raw.image_name, raw.imageName, raw.reference, raw.image]) {
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  if (typeof raw.repository === 'string' && raw.repository.trim().length > 0) {
+    const repo = raw.repository.trim();
+    const tag = typeof raw.tag === 'string' ? raw.tag.trim() : '';
+    if (tag && tag !== '<none>' && !repo.includes(':')) {
+      return `${repo}:${tag}`;
+    }
+    return repo;
+  }
+  if (typeof raw.id === 'string' && raw.id.trim().length > 0) {
+    return raw.id.trim();
+  }
+  return '';
+}
+
 export function buildImageList(
   catalogImages: ImageItem[] = [],
   builtinNames: string[] = BUILTIN_IMAGES,
@@ -27,24 +53,34 @@ export function buildImageList(
   activeBoxes: BoxListItem[] = [],
   defaultImageName?: string
 ): BuildImageListResult {
-  const normDefault = (defaultImageName || 'python').toLowerCase().trim();
+  const normDefault = String(defaultImageName || 'python').toLowerCase().trim();
+  const safeCatalogImages = Array.isArray(catalogImages) ? catalogImages : [];
+  const safeBuiltinNames = (Array.isArray(builtinNames) ? builtinNames : []).filter(
+    (n): n is string => typeof n === 'string' && n.trim().length > 0
+  );
+  const safeCustomImageNames = Array.isArray(customImageNames) ? customImageNames : [];
+  const safeActiveBoxes = Array.isArray(activeBoxes) ? activeBoxes : [];
 
   // Map active box usage by image reference
   const boxesByImage = new Map<string, { id: string; name: string; status: string }[]>();
-  for (const b of activeBoxes) {
-    const rawImg = (b.image || 'python').trim();
+  for (const b of safeActiveBoxes) {
+    if (!b) {
+      continue;
+    }
+    const rawImg = typeof b.image === 'string' && b.image.trim() ? b.image.trim() : 'python';
     const key = rawImg.toLowerCase();
     const existing = boxesByImage.get(key) || [];
+    const boxId = typeof b.id === 'string' ? b.id : String(b.id || '');
     existing.push({
-      id: b.id,
-      name: b.name || `box-${b.id.substring(0, 8)}`,
-      status: (b.status || 'unknown').toLowerCase().trim()
+      id: boxId,
+      name: typeof b.name === 'string' && b.name ? b.name : `box-${boxId.substring(0, 8)}`,
+      status: String(b.status || 'unknown').toLowerCase().trim()
     });
     boxesByImage.set(key, existing);
   }
 
   // 1. Built-in images (free · not counted)
-  const builtins: ImageItem[] = builtinNames.map((name) => {
+  const builtins: ImageItem[] = safeBuiltinNames.map((name) => {
     const key = name.toLowerCase().trim();
     const boxes = boxesByImage.get(key) || [];
     return {
@@ -57,25 +93,34 @@ export function buildImageList(
     };
   });
 
-  const builtinKeys = new Set(builtinNames.map((n) => n.toLowerCase().trim()));
+  const builtinKeys = new Set(safeBuiltinNames.map((n) => n.toLowerCase().trim()));
 
   // 2. Catalog images (excluding built-in names)
   const catalog: ImageItem[] = [];
   const seenCatalogKeys = new Set<string>();
 
-  for (const cat of catalogImages) {
-    const key = cat.name.toLowerCase().trim();
+  for (const cat of safeCatalogImages) {
+    const catName = extractImageName(cat);
+    if (!catName) {
+      continue;
+    }
+    const key = catName.toLowerCase();
     if (builtinKeys.has(key)) {
       continue;
     }
     seenCatalogKeys.add(key);
     const boxes = boxesByImage.get(key) || [];
+    const rawCat = cat as any;
+    const catBoxCount = cat.boxCount ?? rawCat.box_count ?? 0;
     catalog.push({
-      ...cat,
+      ...(typeof cat === 'object' && cat !== null ? cat : {}),
+      name: catName,
+      sizeBytes: cat.sizeBytes ?? rawCat.size_bytes,
+      lastUsedAt: cat.lastUsedAt ?? rawCat.last_used_at ?? rawCat.createdAt ?? rawCat.created_at,
       builtin: false,
       recorded: true,
       isDefault: key === normDefault,
-      boxCount: Math.max(cat.boxCount || 0, boxes.length),
+      boxCount: Math.max(catBoxCount, boxes.length),
       boxes: boxes.length > 0 ? boxes : cat.boxes
     });
   }
@@ -84,7 +129,9 @@ export function buildImageList(
   for (const [key, boxes] of boxesByImage.entries()) {
     if (!builtinKeys.has(key) && !seenCatalogKeys.has(key)) {
       seenCatalogKeys.add(key);
-      const originalName = boxes[0]?.id ? (activeBoxes.find((b) => (b.image || '').toLowerCase().trim() === key)?.image || key) : key;
+      const originalName = boxes[0]?.id
+        ? (safeActiveBoxes.find((b) => b && (typeof b.image === 'string' ? b.image : '').toLowerCase().trim() === key)?.image || key)
+        : key;
       catalog.push({
         name: originalName,
         builtin: false,
@@ -98,15 +145,19 @@ export function buildImageList(
 
   // 3. Custom images from settings (not yet in catalog or built-in)
   const customOnly: ImageItem[] = [];
-  for (const customName of customImageNames) {
-    const key = customName.toLowerCase().trim();
-    if (!key || builtinKeys.has(key) || seenCatalogKeys.has(key)) {
+  for (const customName of safeCustomImageNames) {
+    const resolvedCustom = extractImageName(customName);
+    if (!resolvedCustom) {
+      continue;
+    }
+    const key = resolvedCustom.toLowerCase();
+    if (builtinKeys.has(key) || seenCatalogKeys.has(key)) {
       continue;
     }
     seenCatalogKeys.add(key);
     const boxes = boxesByImage.get(key) || [];
     customOnly.push({
-      name: customName.trim(),
+      name: resolvedCustom,
       builtin: false,
       recorded: false,
       isDefault: key === normDefault,
@@ -124,7 +175,7 @@ export function buildImageList(
     if (aBoxes > 0 && bBoxes === 0) return -1;
     if (aBoxes === 0 && bBoxes > 0) return 1;
     if (aBoxes !== bBoxes) return bBoxes - aBoxes;
-    return a.name.localeCompare(b.name);
+    return (a.name || '').localeCompare(b.name || '');
   };
 
   catalog.sort(sorter);
@@ -196,8 +247,8 @@ export class ImagesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTr
         let usage: ImageUsage | undefined;
         try {
           const imgRes = await this.bridge.listImages();
-          rawImages = imgRes.images || [];
-          usage = imgRes.usage;
+          rawImages = Array.isArray(imgRes?.images) ? imgRes.images : [];
+          usage = imgRes?.usage;
         } catch (e: any) {
           const msg = e?.message || '';
           const isAuthOrForbidden =
@@ -230,12 +281,22 @@ export class ImagesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTr
         this.cachedBuiltins = listResult.builtins;
 
         // 1. Organization catalog usage row
-        const totalKnownBytes = rawImages.reduce((sum, img) => sum + (img.sizeBytes || 0), 0);
-        const resolvedUsage: ImageUsage = usage || {
-          count: listResult.catalog.length,
-          limit: 20,
-          knownBytes: totalKnownBytes
-        };
+        const totalKnownBytes = rawImages.reduce(
+          (sum, img) => sum + ((img as any)?.sizeBytes ?? (img as any)?.size_bytes ?? 0),
+          0
+        );
+        const rawUsage = usage as any;
+        const resolvedUsage: ImageUsage = usage
+          ? {
+              count: usage.count ?? listResult.catalog.length,
+              limit: usage.limit ?? 20,
+              knownBytes: usage.knownBytes ?? rawUsage?.known_bytes ?? totalKnownBytes
+            }
+          : {
+              count: listResult.catalog.length,
+              limit: 20,
+              knownBytes: totalKnownBytes
+            };
         items.push(new ImageUsageTreeItem(resolvedUsage));
 
         // 2. Built-in images group (free · not counted)
@@ -267,7 +328,7 @@ export class ImagesTreeDataProvider implements vscode.TreeDataProvider<BoxLiteTr
           }
         }
       } catch (err: any) {
-        const rawMsg = err.message || '';
+        const rawMsg = err?.message || String(err || '');
         const is403 = rawMsg.includes('403') || rawMsg.toLowerCase().includes('forbidden');
         const is401 = rawMsg.includes('401') || rawMsg.toLowerCase().includes('unauthorized');
 
