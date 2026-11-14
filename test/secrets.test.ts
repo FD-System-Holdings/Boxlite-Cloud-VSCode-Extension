@@ -69,12 +69,12 @@ describe('Outbound Proxy Secrets Support (docs.boxlite.ai/cloud/secrets)', () =>
     const pkgPath = path.resolve(__dirname, '..', '..', 'package.json');
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
 
-    it('declares boxlite.secretsView right after boxlite.checkpointsView', () => {
+    it('declares boxlite.secretsView right after boxlite.accountView', () => {
       const views: Array<{ id: string; name: string }> = pkg.contributes.views['boxlite-explorer'];
-      const chkIdx = views.findIndex((v) => v.id === 'boxlite.checkpointsView');
+      const accIdx = views.findIndex((v) => v.id === 'boxlite.accountView');
       const secIdx = views.findIndex((v) => v.id === 'boxlite.secretsView');
-      assert.ok(chkIdx >= 0, 'checkpointsView missing');
-      assert.strictEqual(secIdx, chkIdx + 1, 'secretsView should immediately follow checkpointsView');
+      assert.ok(accIdx >= 0, 'accountView missing');
+      assert.strictEqual(secIdx, accIdx + 1, 'secretsView should immediately follow accountView');
       assert.strictEqual(views[secIdx].name, 'Secrets');
     });
 

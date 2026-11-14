@@ -44,6 +44,12 @@
           "visibility": "visible"
         },
         {
+          "id": "boxlite.secretsView",
+          "name": "Secrets",
+          "icon": "$(shield)",
+          "visibility": "visible"
+        },
+        {
           "id": "boxlite.boxesView",
           "name": "Boxes",
           "icon": "$(vm)",
@@ -65,12 +71,6 @@
           "id": "boxlite.checkpointsView",
           "name": "Checkpoints",
           "icon": "$(archive)",
-          "visibility": "visible"
-        },
-        {
-          "id": "boxlite.secretsView",
-          "name": "Secrets",
-          "icon": "$(shield)",
           "visibility": "visible"
         }
       ]
