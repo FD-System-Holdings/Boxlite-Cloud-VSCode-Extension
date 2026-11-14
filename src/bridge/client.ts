@@ -20,6 +20,9 @@ import {
   DeleteImageAliasArgs,
   CheckpointItem,
   CreateCheckpointArgs,
+  DomainItem,
+  CreateDomainArgs,
+  UpdateDomainArgs,
   VerifySecretInjectionArgs,
   VerifySecretInjectionResult
 } from './protocol';
@@ -30,6 +33,8 @@ import { parseExecutableCommand, createCleanSubprocessEnv } from '../util/proces
 
 export class BoxLiteBridgeClient implements vscode.Disposable {
   private process: ChildProcess | null = null;
+  private stdoutRl: readline.Interface | null = null;
+  private stderrRl: readline.Interface | null = null;
   private pendingRequests = new Map<
     string,
     {
@@ -140,32 +145,59 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
 
     proc.on('error', (err) => {
       this.safeLog(`[bridge] Process error: ${err.message}`);
+      this.closeReadlines();
       this.rejectAllPending(err);
       this.process = null;
     });
 
     proc.on('exit', (code, signal) => {
       this.safeLog(`[bridge] Process exited with code ${code}, signal ${signal}`);
+      this.closeReadlines();
       this.rejectAllPending(new Error(`Bridge process exited with code ${code}`));
       this.process = null;
     });
 
+    if (proc.stdin) {
+      proc.stdin.on('error', (err) => {
+        this.safeLog(`[bridge] stdin error: ${err.message}`);
+      });
+    }
+
     if (proc.stderr) {
-      const stderrRl = readline.createInterface({ input: proc.stderr });
-      stderrRl.on('line', (line) => {
+      this.stderrRl = readline.createInterface({ input: proc.stderr });
+      this.stderrRl.on('line', (line) => {
         this.safeLog(`[bridge:py] ${line}`);
       });
     }
 
     if (proc.stdout) {
-      const stdoutRl = readline.createInterface({ input: proc.stdout });
-      stdoutRl.on('line', (line) => {
+      this.stdoutRl = readline.createInterface({ input: proc.stdout });
+      this.stdoutRl.on('line', (line) => {
         this.handleStdoutLine(line);
       });
     }
 
     this.process = proc;
     return proc;
+  }
+
+  private closeReadlines(): void {
+    if (this.stdoutRl) {
+      try {
+        this.stdoutRl.close();
+      } catch {
+        // Ignore
+      }
+      this.stdoutRl = null;
+    }
+    if (this.stderrRl) {
+      try {
+        this.stderrRl.close();
+      } catch {
+        // Ignore
+      }
+      this.stderrRl = null;
+    }
   }
 
   private handleStdoutLine(line: string) {
@@ -220,8 +252,15 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
       this.pendingRequests.set(reqId, { resolve, reject, timer });
 
       const line = JSON.stringify(req) + '\n';
-      if (proc.stdin && !proc.stdin.destroyed) {
-        proc.stdin.write(line);
+      if (proc.stdin && !proc.stdin.destroyed && proc.stdin.writable) {
+        try {
+          proc.stdin.write(line);
+        } catch (err: any) {
+          clearTimeout(timer);
+          this.pendingRequests.delete(reqId);
+          this.process = null;
+          reject(err instanceof Error ? err : new Error(String(err)));
+        }
       } else {
         clearTimeout(timer);
         this.pendingRequests.delete(reqId);
@@ -375,8 +414,38 @@ export class BoxLiteBridgeClient implements vscode.Disposable {
     return this.sendRequest<VerifySecretInjectionResult>('verify_secret_injection', args, 120000);
   }
 
+  // Domain Operations
+  public async listDomains(): Promise<DomainItem[]> {
+    return this.coalesceRead('list_domains', async () => {
+      const res = await this.sendRequest<{ domains: DomainItem[] }>('list_domains', {}, 20000);
+      return res.domains || [];
+    });
+  }
+
+  public async createDomain(args: CreateDomainArgs): Promise<DomainItem> {
+    return this.sendRequest<DomainItem>('create_domain', args, 30000);
+  }
+
+  public async inspectDomain(domainKey: string): Promise<any> {
+    const res = await this.sendRequest<{ domain: any }>('inspect_domain', { domainKey }, 20000);
+    return res.domain;
+  }
+
+  public async verifyDomain(domainKey: string): Promise<DomainItem> {
+    return this.sendRequest<DomainItem>('verify_domain', { domainKey }, 30000);
+  }
+
+  public async updateDomain(args: UpdateDomainArgs): Promise<DomainItem> {
+    return this.sendRequest<DomainItem>('update_domain', args, 30000);
+  }
+
+  public async removeDomain(domainKey: string): Promise<{ domainKey: string; removed: boolean }> {
+    return this.sendRequest<{ domainKey: string; removed: boolean }>('remove_domain', { domainKey }, 30000);
+  }
+
   public restartBridge() {
     this.inFlightReads.clear();
+    this.closeReadlines();
     if (this.process) {
       try {
         this.process.kill();

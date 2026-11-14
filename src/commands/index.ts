@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { BoxLiteBridgeClient } from '../bridge/client';
-import { CreateBoxArgs, VolumeItem, CheckpointItem, SecretConfigSpec, SecretSpec } from '../bridge/protocol';
+import { CreateBoxArgs, VolumeItem, CheckpointItem, DomainItem, SecretConfigSpec, SecretSpec } from '../bridge/protocol';
 import { CredentialsManager } from '../auth/credentials';
 import { SecretsManager } from '../auth/secretsStore';
 import { PythonEnvManager } from '../bridge/env';
@@ -10,6 +10,7 @@ import { BoxesTreeDataProvider } from '../tree/boxesProvider';
 import { VolumesTreeDataProvider } from '../tree/volumesProvider';
 import { ImagesTreeDataProvider } from '../tree/imagesProvider';
 import { CheckpointsTreeDataProvider } from '../tree/checkpointsProvider';
+import { DomainsTreeDataProvider } from '../tree/domainsProvider';
 import { SecretsTreeDataProvider } from '../tree/secretsProvider';
 import { AccountTreeDataProvider } from '../tree/accountProvider';
 import {
@@ -17,6 +18,7 @@ import {
   VolumeTreeItem,
   ImageTreeItem,
   CheckpointTreeItem,
+  DomainTreeItem,
   SecretTreeItem,
   ApiKeyTreeItem
 } from '../tree/nodes';
@@ -39,6 +41,7 @@ import {
   validateSecretName,
   validateSecretHosts,
   validateSecretHeaders,
+  validateCustomDomain,
   ALLOWED_REGISTRY_HOSTS
 } from '../util/validation';
 import { diagnoseError } from '../util/diagnosis';
@@ -64,12 +67,14 @@ export function registerCommands(
   accountProvider?: AccountTreeDataProvider,
   checkpointsProvider?: CheckpointsTreeDataProvider,
   secretsProvider?: SecretsTreeDataProvider,
-  secretsManager?: SecretsManager
+  secretsManager?: SecretsManager,
+  domainsProvider?: DomainsTreeDataProvider
 ) {
   const refreshAllViews = () => {
     bridge.restartBridge();
     accountProvider?.refresh();
     treeProvider.refresh();
+    domainsProvider?.refresh();
     volumesProvider?.refresh();
     imagesProvider?.refresh();
     checkpointsProvider?.refresh();
@@ -2139,6 +2144,328 @@ export function registerCommands(
       }
     })
   );
+
+  // Domain Management Commands
+  const ensureAuthenticated = async (): Promise<boolean> => {
+    if (await credentials.getApiKey()) {
+      return true;
+    }
+    vscode.window.showWarningMessage('Please sign in to BoxLite Cloud first.');
+    return false;
+  };
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.refreshDomains', () => {
+      domainsProvider?.refresh();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.createDomain', async () => {
+      if (!(await ensureAuthenticated())) return;
+
+      const rawDomain = await vscode.window.showInputBox({
+        prompt: 'Enter custom domain hostname (e.g. app.example.com)',
+        placeHolder: 'app.example.com',
+        ignoreFocusOut: true,
+        validateInput: (val) => {
+          const check = validateCustomDomain(val);
+          return check.valid ? undefined : check.error;
+        }
+      });
+      if (!rawDomain) return;
+
+      const check = validateCustomDomain(rawDomain);
+      const normalizedDomain = check.normalized || rawDomain.trim().toLowerCase();
+      if (check.warning) {
+        const proceed = await vscode.window.showWarningMessage(check.warning, { modal: true }, 'Continue');
+        if (proceed !== 'Continue') return;
+      }
+
+      let selectedBoxId: string | undefined;
+      let selectedPort: number | undefined;
+
+      try {
+        const boxes = await bridge.listBoxes();
+        const picks: Array<vscode.QuickPickItem & { boxId?: string }> = [
+          {
+            label: '$(circle-slash) Leave unattached for now',
+            description: 'Add domain and bind to a Box later'
+          },
+          ...boxes.map((b) => ({
+            label: b.name || b.id,
+            description: `${b.status} · ${b.id.substring(0, 8)}`,
+            boxId: b.id
+          }))
+        ];
+        const picked = await vscode.window.showQuickPick(picks, {
+          placeHolder: 'Select a target Box to route this domain to (optional)',
+          ignoreFocusOut: true
+        });
+        if (!picked) return;
+        selectedBoxId = picked.boxId;
+
+        if (selectedBoxId) {
+          const portStr = await vscode.window.showInputBox({
+            prompt: 'Target Box port for inbound traffic',
+            value: '8080',
+            ignoreFocusOut: true,
+            validateInput: (val) => {
+              const n = Number(val);
+              return Number.isInteger(n) && n >= 1 && n <= 65535 ? undefined : 'Enter a valid TCP port (1-65535)';
+            }
+          });
+          if (!portStr) return;
+          selectedPort = Number(portStr);
+        }
+      } catch {
+        // Proceed without box binding if listing boxes fails
+      }
+
+      try {
+        const created = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Adding domain ${normalizedDomain}...`,
+            cancellable: false
+          },
+          async () => {
+            const res = await bridge.createDomain({
+              domain: normalizedDomain,
+              boxId: selectedBoxId,
+              port: selectedPort
+            });
+            domainsProvider?.refresh();
+            return res;
+          }
+        );
+
+        const verifyHint =
+          created.verificationRecordName && created.verificationRecordValue
+            ? ` Add ${created.verificationMethod || 'TXT'} record: ${created.verificationRecordName} = ${created.verificationRecordValue}`
+            : created.cnameTarget
+              ? ` Point CNAME to: ${created.cnameTarget}`
+              : '';
+        vscode.window.showInformationMessage(`Domain "${created.domain}" added (${created.status}).${verifyHint}`);
+      } catch (e: any) {
+        const diag = diagnoseError(e.message);
+        const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
+        vscode.window.showErrorMessage(`Failed to add domain: ${msg}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.verifyDomain', async (item?: DomainTreeItem | string) => {
+      if (!(await ensureAuthenticated())) return;
+      const dom = await resolveDomain(item, bridge);
+      if (!dom) return;
+
+      const key = dom.id || dom.domain;
+      try {
+        const updated = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Verifying DNS for ${dom.domain}...`,
+            cancellable: false
+          },
+          async () => {
+            const res = await bridge.verifyDomain(key);
+            domainsProvider?.refresh();
+            return res;
+          }
+        );
+        vscode.window.showInformationMessage(`Domain "${updated.domain}" status: ${updated.status}.`);
+      } catch (e: any) {
+        const diag = diagnoseError(e.message);
+        const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
+        vscode.window.showErrorMessage(`Failed to verify domain: ${msg}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.bindDomainToBox', async (item?: DomainTreeItem | string) => {
+      if (!(await ensureAuthenticated())) return;
+      const dom = await resolveDomain(item, bridge);
+      if (!dom) return;
+
+      const boxes = await bridge.listBoxes();
+      const picks: Array<vscode.QuickPickItem & { boxId: string | null }> = [
+        ...boxes.map((b) => ({
+          label: b.name || b.id,
+          description: `${b.status} · ${b.id.substring(0, 8)}`,
+          boxId: b.id
+        })),
+        {
+          label: '$(circle-slash) Detach from Box',
+          description: 'Remove target Box routing for this domain',
+          boxId: null
+        }
+      ];
+
+      const picked = await vscode.window.showQuickPick(picks, {
+        placeHolder: `Select target Box for ${dom.domain}`,
+        ignoreFocusOut: true
+      });
+      if (!picked) return;
+
+      let port: number | null | undefined;
+      if (picked.boxId !== null) {
+        const portStr = await vscode.window.showInputBox({
+          prompt: `Target port on ${picked.label}`,
+          value: String(dom.port || 8080),
+          ignoreFocusOut: true,
+          validateInput: (val) => {
+            const n = Number(val);
+            return Number.isInteger(n) && n >= 1 && n <= 65535 ? undefined : 'Enter a valid TCP port (1-65535)';
+          }
+        });
+        if (!portStr) return;
+        port = Number(portStr);
+      }
+
+      const key = dom.id || dom.domain;
+      try {
+        const updated = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Updating routing for ${dom.domain}...`,
+            cancellable: false
+          },
+          async () => {
+            const res = await bridge.updateDomain({
+              domainKey: key,
+              boxId: picked.boxId,
+              port
+            });
+            domainsProvider?.refresh();
+            return res;
+          }
+        );
+        const routeMsg = picked.boxId ? `routed to ${picked.label}:${port}` : 'detached from Box';
+        vscode.window.showInformationMessage(`Domain "${updated.domain}" ${routeMsg}.`);
+      } catch (e: any) {
+        const diag = diagnoseError(e.message);
+        const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
+        vscode.window.showErrorMessage(`Failed to update domain routing: ${msg}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.openDomainUrl', async (item?: DomainTreeItem | string) => {
+      const dom = await resolveDomain(item, bridge);
+      if (!dom) return;
+      await vscode.env.openExternal(vscode.Uri.parse(`https://${dom.domain}`));
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.copyDomainName', async (item?: DomainTreeItem | string) => {
+      const dom = await resolveDomain(item, bridge);
+      if (!dom) return;
+      await vscode.env.clipboard.writeText(dom.domain);
+      vscode.window.showInformationMessage(`Copied domain: ${dom.domain}`);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.copyDomainVerification', async (value?: string, label = 'value') => {
+      if (!value) return;
+      await vscode.env.clipboard.writeText(value);
+      vscode.window.showInformationMessage(`Copied ${label}: ${value}`);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.inspectDomain', async (item?: DomainTreeItem | string) => {
+      if (!(await ensureAuthenticated())) return;
+      const dom = await resolveDomain(item, bridge);
+      if (!dom) return;
+
+      const key = dom.id || dom.domain;
+      try {
+        const details = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Inspecting domain ${dom.domain}...`,
+            cancellable: false
+          },
+          () => bridge.inspectDomain(key)
+        );
+        const doc = await vscode.workspace.openTextDocument({
+          content: JSON.stringify(details, null, 2),
+          language: 'json'
+        });
+        await vscode.window.showTextDocument(doc, { preview: false });
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`Failed to inspect domain: ${e.message}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('boxlite.deleteDomain', async (item?: DomainTreeItem | string) => {
+      if (!(await ensureAuthenticated())) return;
+      const dom = await resolveDomain(item, bridge);
+      if (!dom) return;
+
+      const confirm = await vscode.window.showWarningMessage(
+        `Delete custom domain "${dom.domain}"? Traffic to this domain will stop routing to BoxLite Cloud.`,
+        { modal: true },
+        'Delete'
+      );
+      if (confirm !== 'Delete') return;
+
+      const key = dom.id || dom.domain;
+      try {
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Deleting domain ${dom.domain}...`,
+            cancellable: false
+          },
+          async () => {
+            await bridge.removeDomain(key);
+            domainsProvider?.refresh();
+          }
+        );
+        vscode.window.showInformationMessage(`Domain "${dom.domain}" deleted.`);
+      } catch (e: any) {
+        const diag = diagnoseError(e.message);
+        const msg = e.message.includes('Diagnosis:') ? e.message : `${e.message}\nDiagnosis: ${diag.summary}`;
+        vscode.window.showErrorMessage(`Failed to delete domain: ${msg}`);
+      }
+    })
+  );
+}
+
+async function resolveDomain(
+  item: DomainTreeItem | string | undefined,
+  bridge: BoxLiteBridgeClient
+): Promise<DomainItem | undefined> {
+  if (item && typeof item === 'object' && 'domain' in item && item.domain) {
+    return item.domain;
+  }
+  const key = typeof item === 'string' ? item.trim() : undefined;
+  const domains = await bridge.listDomains();
+  if (key) {
+    return domains.find((d) => d.id === key || d.domain === key) || { id: key, domain: key, status: 'pending' };
+  }
+  if (domains.length === 0) {
+    vscode.window.showInformationMessage('No custom domains found.');
+    return undefined;
+  }
+  const picked = await vscode.window.showQuickPick(
+    domains.map((d) => ({
+      label: d.domain,
+      description: `${d.status}${d.boxName || d.boxId ? ` · → ${d.boxName || d.boxId}` : ''}`,
+      domain: d
+    })),
+    { placeHolder: 'Select a custom domain', ignoreFocusOut: true }
+  );
+  return picked?.domain;
 }
 
 async function resolveBoxId(item?: any, bridge?: BoxLiteBridgeClient): Promise<string | undefined> {

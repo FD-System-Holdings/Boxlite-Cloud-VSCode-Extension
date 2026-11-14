@@ -7,6 +7,7 @@ import { parseExecutableCommand, createCleanSubprocessEnv } from '../util/proces
 export class PythonEnvManager {
   private outputChannel: vscode.OutputChannel;
   private cachedPythonPath: string | null = null;
+  private resolvePythonPathPromise: Promise<string> | null = null;
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -19,7 +20,17 @@ export class PythonEnvManager {
     if (this.cachedPythonPath) {
       return this.cachedPythonPath;
     }
+    if (this.resolvePythonPathPromise) {
+      return this.resolvePythonPathPromise;
+    }
 
+    this.resolvePythonPathPromise = this.resolvePythonPath().finally(() => {
+      this.resolvePythonPathPromise = null;
+    });
+    return this.resolvePythonPathPromise;
+  }
+
+  private async resolvePythonPath(): Promise<string> {
     const config = vscode.workspace.getConfiguration('boxlite');
     const configured = config.get<string>('pythonPath');
     if (configured && configured.trim().length > 0) {

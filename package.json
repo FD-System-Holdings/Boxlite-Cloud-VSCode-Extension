@@ -44,15 +44,21 @@
           "visibility": "visible"
         },
         {
-          "id": "boxlite.secretsView",
-          "name": "Secrets",
-          "icon": "$(shield)",
-          "visibility": "visible"
-        },
-        {
           "id": "boxlite.boxesView",
           "name": "Boxes",
           "icon": "$(vm)",
+          "visibility": "visible"
+        },
+        {
+          "id": "boxlite.domainsView",
+          "name": "Domains",
+          "icon": "$(globe)",
+          "visibility": "visible"
+        },
+        {
+          "id": "boxlite.secretsView",
+          "name": "Secrets",
+          "icon": "$(shield)",
           "visibility": "visible"
         },
         {
@@ -435,6 +441,54 @@
         "title": "Delete Proxy Secret",
         "category": "BoxLite",
         "icon": "$(trash)"
+      },
+      {
+        "command": "boxlite.refreshDomains",
+        "title": "Refresh Domains",
+        "category": "BoxLite",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "boxlite.createDomain",
+        "title": "Add Domain...",
+        "category": "BoxLite",
+        "icon": "$(add)"
+      },
+      {
+        "command": "boxlite.verifyDomain",
+        "title": "Verify DNS",
+        "category": "BoxLite",
+        "icon": "$(check)"
+      },
+      {
+        "command": "boxlite.bindDomainToBox",
+        "title": "Bind Domain to Box...",
+        "category": "BoxLite",
+        "icon": "$(link)"
+      },
+      {
+        "command": "boxlite.openDomainUrl",
+        "title": "Open Domain in Browser",
+        "category": "BoxLite",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "boxlite.copyDomainName",
+        "title": "Copy Domain Name",
+        "category": "BoxLite",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "boxlite.inspectDomain",
+        "title": "Inspect Domain (JSON)",
+        "category": "BoxLite",
+        "icon": "$(json)"
+      },
+      {
+        "command": "boxlite.deleteDomain",
+        "title": "Delete Domain",
+        "category": "BoxLite",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
@@ -518,6 +572,16 @@
           "command": "boxlite.verifySecretInjection",
           "when": "view == boxlite.secretsView",
           "group": "navigation@3"
+        },
+        {
+          "command": "boxlite.refreshDomains",
+          "when": "view == boxlite.domainsView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "boxlite.createDomain",
+          "when": "view == boxlite.domainsView",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
@@ -554,6 +618,41 @@
         {
           "command": "boxlite.removeApiKey",
           "when": "view == boxlite.accountView && (viewItem == 'apikey' || viewItem == 'apikey-active')",
+          "group": "9_danger@1"
+        },
+        {
+          "command": "boxlite.verifyDomain",
+          "when": "view == boxlite.domainsView && viewItem =~ /^domain-(pending|failed|error)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "boxlite.bindDomainToBox",
+          "when": "view == boxlite.domainsView && viewItem =~ /^domain-(?!deleting)/",
+          "group": "1_manage@1"
+        },
+        {
+          "command": "boxlite.openDomainUrl",
+          "when": "view == boxlite.domainsView && viewItem =~ /^domain-(active|verified|ready)$/",
+          "group": "1_manage@2"
+        },
+        {
+          "command": "boxlite.verifyDomain",
+          "when": "view == boxlite.domainsView && viewItem =~ /^domain-(pending|failed|error)$/",
+          "group": "1_manage@3"
+        },
+        {
+          "command": "boxlite.copyDomainName",
+          "when": "view == boxlite.domainsView && viewItem =~ /^domain-/",
+          "group": "2_copy@1"
+        },
+        {
+          "command": "boxlite.inspectDomain",
+          "when": "view == boxlite.domainsView && viewItem =~ /^domain-/",
+          "group": "3_inspect@1"
+        },
+        {
+          "command": "boxlite.deleteDomain",
+          "when": "view == boxlite.domainsView && viewItem =~ /^domain-(?!deleting)/",
           "group": "9_danger@1"
         },
         {

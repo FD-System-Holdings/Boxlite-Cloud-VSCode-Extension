@@ -1,5 +1,14 @@
 import * as vscode from 'vscode';
-import { BoxListItem, TunnelInfo, VolumeItem, ImageItem, ImageUsage, CheckpointItem, SecretConfigSpec } from '../bridge/protocol';
+import {
+  BoxListItem,
+  TunnelInfo,
+  VolumeItem,
+  ImageItem,
+  ImageUsage,
+  CheckpointItem,
+  SecretConfigSpec,
+  DomainItem
+} from '../bridge/protocol';
 
 export abstract class BoxLiteTreeItem extends vscode.TreeItem {
   constructor(
@@ -434,6 +443,78 @@ export class SecretChildTreeItem extends BoxLiteTreeItem {
     collapsible: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
     contextValue?: string,
     public readonly secretName?: string,
+    tooltip?: string
+  ) {
+    super(label, collapsible);
+    this.description = description;
+    this.tooltip = tooltip || description;
+    if (icon) {
+      this.iconPath = new vscode.ThemeIcon(icon);
+    }
+    this.command = command;
+    this.contextValue = contextValue;
+  }
+}
+
+export class DomainTreeItem extends BoxLiteTreeItem {
+  public readonly domain: DomainItem;
+
+  constructor(domain: DomainItem) {
+    const label = domain.domain || domain.id;
+    super(label, vscode.TreeItemCollapsibleState.Collapsed);
+    this.domain = domain;
+
+    const status = (domain.status || 'pending').toLowerCase().trim();
+    const targetLabel = domain.boxName || domain.boxId;
+    const portSuffix = domain.port ? `:${domain.port}` : '';
+    const targetDesc = targetLabel ? `→ ${targetLabel}${portSuffix}` : 'unattached';
+
+    this.description = `${status} · ${targetDesc}`;
+
+    if (status === 'active' || status === 'verified' || status === 'ready') {
+      this.iconPath = new vscode.ThemeIcon('globe', new vscode.ThemeColor('charts.green'));
+    } else if (status === 'pending' || status === 'verifying' || status === 'provisioning') {
+      this.iconPath = new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.yellow'));
+    } else if (status === 'deleting') {
+      this.iconPath = new vscode.ThemeIcon('trash', new vscode.ThemeColor('charts.red'));
+    } else if (status === 'failed' || status === 'error') {
+      this.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
+    } else {
+      this.iconPath = new vscode.ThemeIcon('globe');
+    }
+
+    const lines = [
+      `Domain: ${label}`,
+      `Status: ${status}`,
+      `Target: ${targetLabel ? `${targetLabel}${portSuffix}` : 'Not bound to a Box'}`
+    ];
+    if (domain.tlsStatus) {
+      lines.push(`TLS: ${domain.tlsStatus}`);
+    }
+    if (domain.cnameTarget) {
+      lines.push(`CNAME Target: ${domain.cnameTarget}`);
+    }
+    if (domain.verificationRecordName && domain.verificationRecordValue) {
+      lines.push(`DNS ${domain.verificationMethod || 'TXT'}: ${domain.verificationRecordName} = ${domain.verificationRecordValue}`);
+    }
+    if (domain.errorReason) {
+      lines.push(`Error: ${domain.errorReason}`);
+    }
+    this.tooltip = lines.join('\n');
+
+    this.contextValue = `domain-${status}`;
+  }
+}
+
+export class DomainChildTreeItem extends BoxLiteTreeItem {
+  constructor(
+    label: string,
+    description?: string,
+    icon?: string,
+    command?: vscode.Command,
+    collapsible: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
+    contextValue?: string,
+    public readonly domainKey?: string,
     tooltip?: string
   ) {
     super(label, collapsible);

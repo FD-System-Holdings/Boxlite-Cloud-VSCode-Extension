@@ -230,3 +230,32 @@ export interface TailLogResult {
   stopped?: boolean;
   status?: string;
 }
+
+export interface DomainItem {
+  id: string;
+  domain: string;
+  status: 'active' | 'verified' | 'pending' | 'verifying' | 'failed' | 'deleting' | string;
+  boxId?: string;
+  boxName?: string;
+  port?: number;
+  verificationMethod?: string;
+  verificationRecordName?: string;
+  verificationRecordValue?: string;
+  cnameTarget?: string;
+  tlsStatus?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  errorReason?: string;
+}
+
+export interface CreateDomainArgs {
+  domain: string;
+  boxId?: string;
+  port?: number;
+}
+
+export interface UpdateDomainArgs {
+  domainKey: string;
+  boxId?: string | null;
+  port?: number | null;
+}

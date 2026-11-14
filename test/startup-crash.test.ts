@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import { CredentialsManager } from '../src/auth/credentials';
 import { SecretsManager } from '../src/auth/secretsStore';
 import { BoxLiteBridgeClient } from '../src/bridge/client';
+import { PythonEnvManager } from '../src/bridge/env';
 import { createSafeLazyOutputChannel } from '../src/extension';
 import { AccountTreeDataProvider } from '../src/tree/accountProvider';
 import { BoxesTreeDataProvider } from '../src/tree/boxesProvider';
@@ -453,6 +454,58 @@ describe('Startup Focus Crash Prevention & Hardening', () => {
       }
       assert.ok(credCalls > 0);
       assert.ok(bridgeCalls > 0);
+    });
+  });
+
+  describe('PythonEnvManager & Bridge Stdin Safety', () => {
+    it('deduplicates concurrent getPythonPath() resolution calls', async () => {
+      const dummyChannel = createSafeLazyOutputChannel('Test PythonEnv');
+      const envMgr = new PythonEnvManager(
+        { globalStorageUri: { fsPath: path.join(repoRoot, '.nonexistent-storage') } } as unknown as vscode.ExtensionContext,
+        dummyChannel
+      );
+
+      let probeCount = 0;
+      (envMgr as any).testExecutable = async () => {
+        probeCount++;
+        await new Promise((r) => setTimeout(r, 20));
+        return true;
+      };
+
+      const results = await Promise.all([
+        envMgr.getPythonPath(),
+        envMgr.getPythonPath(),
+        envMgr.getPythonPath(),
+        envMgr.getPythonPath()
+      ]);
+
+      assert.strictEqual(probeCount, 1, 'Concurrent getPythonPath() calls must coalesce into one probe');
+      assert.strictEqual(new Set(results).size, 1);
+    });
+
+    it('rejects cleanly when bridge stdin is closed or throws on write', async () => {
+      const dummyChannel = createSafeLazyOutputChannel('Test Bridge Stdin');
+      const client = new BoxLiteBridgeClient(
+        { extensionPath: repoRoot } as unknown as vscode.ExtensionContext,
+        { getApiKey: async () => 'blk_test', getRestUrl: () => 'https://api.boxlite.ai' } as unknown as CredentialsManager,
+        { getPythonPath: async () => 'python3' } as unknown as PythonEnvManager,
+        dummyChannel
+      );
+
+      (client as any).process = {
+        killed: false,
+        stdin: {
+          destroyed: false,
+          writable: true,
+          write: () => {
+            throw new Error('EPIPE');
+          }
+        },
+        kill: () => true
+      };
+
+      await assert.rejects(() => client.sendRequest('list_boxes', {}, 1000), /EPIPE/);
+      client.dispose();
     });
   });
 });

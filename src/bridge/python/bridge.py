@@ -378,6 +378,64 @@ class RestRuntimeFallback:
         path = f"/checkpoints/{encoded_key}?force=true" if force else f"/checkpoints/{encoded_key}"
         await loop.run_in_executor(None, self._request, "DELETE", path)
 
+    async def list_domains(self) -> List[Dict[str, Any]]:
+        loop = asyncio.get_running_loop()
+        domains: List[Dict[str, Any]] = []
+        page_token: Optional[str] = None
+        while True:
+            path = "/domains"
+            if page_token:
+                path = f"/domains?pageToken={urllib.parse.quote(page_token, safe='')}"
+            res = await loop.run_in_executor(None, self._request, "GET", path)
+            if isinstance(res, dict):
+                page_items = res.get("domains") or res.get("items")
+                if isinstance(page_items, list):
+                    domains.extend(page_items)
+                next_token = res.get("next_page_token") or res.get("nextPageToken")
+                if not next_token:
+                    break
+                page_token = next_token
+            elif isinstance(res, list):
+                domains.extend(res)
+                break
+            else:
+                break
+        return domains
+
+    async def get_domain(self, key: str) -> Dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        encoded_key = urllib.parse.quote(key, safe="")
+        return await loop.run_in_executor(None, self._request, "GET", f"/domains/{encoded_key}")
+
+    async def create_domain(self, domain: str, box_id: Optional[str] = None, port: Optional[int] = None) -> Dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        body: Dict[str, Any] = {"domain": domain}
+        if box_id:
+            body["box_id"] = box_id
+        if port is not None:
+            body["port"] = int(port)
+        return await loop.run_in_executor(None, self._request, "POST", "/domains", body)
+
+    async def verify_domain(self, key: str) -> Dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        encoded_key = urllib.parse.quote(key, safe="")
+        return await loop.run_in_executor(None, self._request, "POST", f"/domains/{encoded_key}/verify", {})
+
+    async def update_domain(self, key: str, box_id: Optional[str] = None, port: Optional[int] = None) -> Dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        encoded_key = urllib.parse.quote(key, safe="")
+        body: Dict[str, Any] = {}
+        if box_id is not None:
+            body["box_id"] = box_id if box_id else None
+        if port is not None:
+            body["port"] = int(port)
+        return await loop.run_in_executor(None, self._request, "PATCH", f"/domains/{encoded_key}", body)
+
+    async def remove_domain(self, key: str) -> None:
+        loop = asyncio.get_running_loop()
+        encoded_key = urllib.parse.quote(key, safe="")
+        await loop.run_in_executor(None, self._request, "DELETE", f"/domains/{encoded_key}")
+
 
 class BoxLiteBridge:
     def __init__(self):
@@ -1708,6 +1766,188 @@ class BoxLiteBridge:
                     cleaned_up = True
                 except Exception as cleanup_err:
                     log_debug(f"Failed to remove verification box {box_id}: {cleanup_err}")
+
+    def _get_domain_handle(self, rt: Any) -> Any:
+        if hasattr(rt, "domains"):
+            attr = getattr(rt, "domains")
+            return attr() if callable(attr) else attr
+        return None
+
+    def _format_domain(self, d: Any) -> Dict[str, Any]:
+        if isinstance(d, dict):
+            raw_id = d.get("id") or d.get("domain_id") or d.get("domainId") or ""
+            domain_name = d.get("domain") or d.get("hostname") or d.get("name") or raw_id
+            status_val = d.get("status") or d.get("state") or "pending"
+            box_id = d.get("box_id") or d.get("boxId")
+            box_name = d.get("box_name") or d.get("boxName")
+            port = d.get("port")
+            verification_method = d.get("verification_method") or d.get("verificationMethod")
+            verification_record_name = d.get("verification_record_name") or d.get("verificationRecordName")
+            verification_record_value = d.get("verification_record_value") or d.get("verificationRecordValue")
+            cname_target = d.get("cname_target") or d.get("cnameTarget")
+            tls_status = d.get("tls_status") or d.get("tlsStatus")
+            created_at = d.get("created_at") or d.get("createdAt")
+            updated_at = d.get("updated_at") or d.get("updatedAt")
+            error_reason = d.get("error_reason") or d.get("errorReason") or d.get("error")
+        else:
+            raw_id = getattr(d, "id", "") or ""
+            domain_name = getattr(d, "domain", None) or getattr(d, "hostname", None) or getattr(d, "name", None) or raw_id
+            status_val = getattr(d, "status", None) or getattr(d, "state", "pending")
+            box_id = getattr(d, "box_id", None) or getattr(d, "boxId", None)
+            box_name = getattr(d, "box_name", None) or getattr(d, "boxName", None)
+            port = getattr(d, "port", None)
+            verification_method = getattr(d, "verification_method", None) or getattr(d, "verificationMethod", None)
+            verification_record_name = getattr(d, "verification_record_name", None) or getattr(d, "verificationRecordName", None)
+            verification_record_value = getattr(d, "verification_record_value", None) or getattr(d, "verificationRecordValue", None)
+            cname_target = getattr(d, "cname_target", None) or getattr(d, "cnameTarget", None)
+            tls_status = getattr(d, "tls_status", None) or getattr(d, "tlsStatus", None)
+            created_at = getattr(d, "created_at", None) or getattr(d, "createdAt", None)
+            updated_at = getattr(d, "updated_at", None) or getattr(d, "updatedAt", None)
+            error_reason = getattr(d, "error_reason", None) or getattr(d, "errorReason", None)
+
+        if not raw_id:
+            raw_id = str(domain_name)
+
+        status_str = str(getattr(status_val, "value", getattr(status_val, "name", status_val))).lower()
+        if "." in status_str:
+            status_str = status_str.split(".")[-1]
+
+        out: Dict[str, Any] = {
+            "id": str(raw_id),
+            "domain": str(domain_name),
+            "status": status_str or "pending",
+        }
+        if box_id:
+            out["boxId"] = str(box_id)
+        if box_name:
+            out["boxName"] = str(box_name)
+        if port is not None:
+            out["port"] = int(port)
+        if verification_method:
+            out["verificationMethod"] = str(verification_method)
+        if verification_record_name:
+            out["verificationRecordName"] = str(verification_record_name)
+        if verification_record_value:
+            out["verificationRecordValue"] = str(verification_record_value)
+        if cname_target:
+            out["cnameTarget"] = str(cname_target)
+        if tls_status:
+            out["tlsStatus"] = str(tls_status)
+        if created_at:
+            out["createdAt"] = self._serialize_timestamp(created_at) or str(created_at)
+        if updated_at:
+            out["updatedAt"] = self._serialize_timestamp(updated_at) or str(updated_at)
+        if error_reason:
+            out["errorReason"] = str(error_reason)
+        return out
+
+    def _domain_rest_fallback(self, rt: Any) -> RestRuntimeFallback:
+        if isinstance(rt, RestRuntimeFallback):
+            return rt
+        return RestRuntimeFallback(
+            os.environ.get("BOXLITE_REST_URL", "https://api.boxlite.ai"),
+            os.environ.get("BOXLITE_API_KEY", "")
+        )
+
+    async def handle_list_domains(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        domains = None
+        handle = self._get_domain_handle(rt)
+        if handle is not None and hasattr(handle, "list") and callable(handle.list):
+            try:
+                domains = await handle.list()
+            except Exception as e:
+                log_debug(f"rt.domains.list() failed ({e}), falling back to REST")
+
+        if domains is None:
+            domains = await self._domain_rest_fallback(rt).list_domains()
+
+        return {"domains": [self._format_domain(d) for d in (domains or [])]}
+
+    async def handle_create_domain(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        domain = args["domain"]
+        box_id = args.get("boxId")
+        port = args.get("port")
+
+        handle = self._get_domain_handle(rt)
+        if handle is not None and hasattr(handle, "create") and callable(handle.create):
+            try:
+                info = await handle.create(domain, box_id=box_id, port=port)
+                return self._format_domain(info)
+            except Exception as e:
+                log_debug(f"rt.domains.create() failed ({e}), falling back to REST")
+
+        res = await self._domain_rest_fallback(rt).create_domain(domain, box_id=box_id, port=port)
+        return self._format_domain(res)
+
+    async def handle_inspect_domain(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        key = args["domainKey"]
+
+        handle = self._get_domain_handle(rt)
+        if handle is not None and hasattr(handle, "get") and callable(handle.get):
+            try:
+                info = await handle.get(key)
+                if hasattr(info, "to_dict"):
+                    data = info.to_dict()
+                elif hasattr(info, "__dict__"):
+                    data = {k: v for k, v in info.__dict__.items() if not k.startswith("_")}
+                else:
+                    data = self._format_domain(info)
+                return {"domain": data}
+            except Exception as e:
+                log_debug(f"rt.domains.get() failed ({e}), falling back to REST")
+
+        res = await self._domain_rest_fallback(rt).get_domain(key)
+        return {"domain": res}
+
+    async def handle_verify_domain(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        key = args["domainKey"]
+
+        handle = self._get_domain_handle(rt)
+        if handle is not None and hasattr(handle, "verify") and callable(handle.verify):
+            try:
+                info = await handle.verify(key)
+                return self._format_domain(info)
+            except Exception as e:
+                log_debug(f"rt.domains.verify() failed ({e}), falling back to REST")
+
+        res = await self._domain_rest_fallback(rt).verify_domain(key)
+        return self._format_domain(res)
+
+    async def handle_update_domain(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        key = args["domainKey"]
+        box_id = args.get("boxId")
+        port = args.get("port")
+
+        handle = self._get_domain_handle(rt)
+        if handle is not None and hasattr(handle, "update") and callable(handle.update):
+            try:
+                info = await handle.update(key, box_id=box_id, port=port)
+                return self._format_domain(info)
+            except Exception as e:
+                log_debug(f"rt.domains.update() failed ({e}), falling back to REST")
+
+        res = await self._domain_rest_fallback(rt).update_domain(key, box_id=box_id, port=port)
+        return self._format_domain(res)
+
+    async def handle_remove_domain(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        rt = self.ensure_runtime()
+        key = args["domainKey"]
+
+        handle = self._get_domain_handle(rt)
+        if handle is not None and hasattr(handle, "remove") and callable(handle.remove):
+            try:
+                await handle.remove(key)
+                return {"domainKey": key, "removed": True}
+            except Exception as e:
+                log_debug(f"rt.domains.remove() failed ({e}), falling back to REST")
+
+        await self._domain_rest_fallback(rt).remove_domain(key)
+        return {"domainKey": key, "removed": True}
 
     async def dispatch(self, req: Dict[str, Any]):
         req_id = req.get("id", "none")

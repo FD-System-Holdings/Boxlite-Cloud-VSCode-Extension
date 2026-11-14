@@ -487,3 +487,53 @@ export function validateEnvAgainstSecrets(
 
   return { valid: true };
 }
+
+export function validateCustomDomain(domain: string): {
+  valid: boolean;
+  normalized?: string;
+  error?: string;
+  warning?: string;
+} {
+  const trimmed = (domain || '').trim().replace(/\.+$/, '').toLowerCase();
+  if (!trimmed) {
+    return { valid: false, error: 'Domain name cannot be empty.' };
+  }
+  if (trimmed.includes('://')) {
+    return { valid: false, error: 'Enter a domain hostname without a URL scheme (e.g. app.example.com).' };
+  }
+  if (trimmed.includes('/') || trimmed.includes('?') || trimmed.includes('#')) {
+    return { valid: false, error: 'Domain name cannot contain paths, query strings, or fragments.' };
+  }
+  if (trimmed.includes(':')) {
+    return { valid: false, error: 'Domain name cannot include a port specification.' };
+  }
+  if (/\s/.test(trimmed)) {
+    return { valid: false, error: 'Domain name cannot contain whitespace.' };
+  }
+  if (trimmed.startsWith('*.')) {
+    return { valid: false, error: 'Wildcard custom domains are not supported; enter an exact domain or subdomain.' };
+  }
+  if (trimmed.length > 253) {
+    return { valid: false, error: 'Domain name cannot exceed 253 characters.' };
+  }
+
+  const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+  if (ipv4Regex.test(trimmed)) {
+    return { valid: false, error: 'IP addresses are not valid custom domains; enter a DNS hostname.' };
+  }
+
+  const fqdnRegex = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+  if (!fqdnRegex.test(trimmed)) {
+    return {
+      valid: false,
+      error: 'Enter a valid fully-qualified domain name (e.g. app.example.com).'
+    };
+  }
+
+  let warning: string | undefined;
+  if (trimmed === 'boxlite.ai' || trimmed.endsWith('.boxlite.ai')) {
+    warning = 'boxlite.ai subdomains are platform-managed by BoxLite Cloud.';
+  }
+
+  return { valid: true, normalized: trimmed, warning };
+}

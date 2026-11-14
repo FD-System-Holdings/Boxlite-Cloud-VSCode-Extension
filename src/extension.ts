@@ -7,6 +7,7 @@ import { BoxesTreeDataProvider } from './tree/boxesProvider';
 import { VolumesTreeDataProvider } from './tree/volumesProvider';
 import { ImagesTreeDataProvider } from './tree/imagesProvider';
 import { CheckpointsTreeDataProvider } from './tree/checkpointsProvider';
+import { DomainsTreeDataProvider } from './tree/domainsProvider';
 import { SecretsTreeDataProvider } from './tree/secretsProvider';
 import { AccountTreeDataProvider } from './tree/accountProvider';
 import { BoxLiteDeployer } from './deploy/deployer';
@@ -15,6 +16,18 @@ import { registerCommands } from './commands';
 
 let statusBarItem: vscode.StatusBarItem;
 let startupTimer: NodeJS.Timeout | undefined;
+const pendingStartupTimers = new Set<NodeJS.Timeout>();
+
+function clearPendingStartupTimers(): void {
+  if (startupTimer) {
+    clearTimeout(startupTimer);
+    startupTimer = undefined;
+  }
+  for (const timer of pendingStartupTimers) {
+    clearTimeout(timer);
+  }
+  pendingStartupTimers.clear();
+}
 
 export interface SafeLazyOutputChannel extends vscode.OutputChannel {
   flush(): void;
@@ -165,10 +178,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push({
     dispose: () => {
       extensionDisposed = true;
-      if (startupTimer) {
-        clearTimeout(startupTimer);
-        startupTimer = undefined;
-      }
+      clearPendingStartupTimers();
     }
   });
 
@@ -185,6 +195,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const accountProvider = new AccountTreeDataProvider(credentials);
   const treeProvider = new BoxesTreeDataProvider(bridge, credentials, logManager);
+  const domainsProvider = new DomainsTreeDataProvider(bridge, credentials);
   const imagesProvider = new ImagesTreeDataProvider(bridge, credentials);
   const volumesProvider = new VolumesTreeDataProvider(bridge, credentials);
   const checkpointsProvider = new CheckpointsTreeDataProvider(bridge, credentials);
@@ -192,8 +203,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const allProviders = [
     accountProvider,
-    secretsProvider,
     treeProvider,
+    domainsProvider,
+    secretsProvider,
     imagesProvider,
     volumesProvider,
     checkpointsProvider
@@ -207,17 +219,23 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(accountTreeView);
 
-  const secretsTreeView = vscode.window.createTreeView('boxlite.secretsView', {
-    treeDataProvider: secretsProvider,
-    showCollapseAll: true
-  });
-  context.subscriptions.push(secretsTreeView);
-
   const treeView = vscode.window.createTreeView('boxlite.boxesView', {
     treeDataProvider: treeProvider,
     showCollapseAll: true
   });
   context.subscriptions.push(treeView);
+
+  const domainsTreeView = vscode.window.createTreeView('boxlite.domainsView', {
+    treeDataProvider: domainsProvider,
+    showCollapseAll: true
+  });
+  context.subscriptions.push(domainsTreeView);
+
+  const secretsTreeView = vscode.window.createTreeView('boxlite.secretsView', {
+    treeDataProvider: secretsProvider,
+    showCollapseAll: true
+  });
+  context.subscriptions.push(secretsTreeView);
 
   const imagesTreeView = vscode.window.createTreeView('boxlite.imagesView', {
     treeDataProvider: imagesProvider,
@@ -245,6 +263,7 @@ export async function activate(context: vscode.ExtensionContext) {
     () => {
       accountProvider.refresh();
       treeProvider.refresh();
+      domainsProvider.refresh();
       volumesProvider.refresh();
       imagesProvider.refresh();
       checkpointsProvider.refresh();
@@ -267,7 +286,8 @@ export async function activate(context: vscode.ExtensionContext) {
     accountProvider,
     checkpointsProvider,
     secretsProvider,
-    secretsManager
+    secretsManager,
+    domainsProvider
   );
 
   // Configuration change listener
@@ -292,9 +312,20 @@ export async function activate(context: vscode.ExtensionContext) {
 
   outputChannel.appendLine('[boxlite] BoxLite extension activated successfully.');
 
-  // Defer SecretStorage warm-up and initial sidebar population until Extension Host startup settles
-  const startupDelayMs = process.uptime() < 15 ? 1000 : 150;
-  startupTimer = setTimeout(async () => {
+  // Defer OutputChannel creation, SecretStorage warm-up, and initial sidebar population
+  // until Extension Host eager + onStartupFinished activation and @vscode/spdlog settle
+  const startupDelayMs = process.uptime() < 15 ? 2500 : 250;
+  const scheduleStartupStep = (fn: () => void | Promise<void>, delayMs: number): void => {
+    const timer = setTimeout(() => {
+      pendingStartupTimers.delete(timer);
+      if (!extensionDisposed) {
+        void fn();
+      }
+    }, delayMs);
+    pendingStartupTimers.add(timer);
+  };
+
+  startupTimer = setTimeout(() => {
     startupTimer = undefined;
     if (extensionDisposed) {
       return;
@@ -302,43 +333,46 @@ export async function activate(context: vscode.ExtensionContext) {
 
     outputChannel.flush();
 
-    try {
-      const [apiKey] = await Promise.all([
-        credentials.getApiKey().catch(() => undefined),
-        secretsManager.listSecrets().catch(() => [])
-      ]);
+    scheduleStartupStep(async () => {
+      try {
+        const [apiKey] = await Promise.all([
+          credentials.getApiKey().catch(() => undefined),
+          secretsManager.listSecrets().catch(() => [])
+        ]);
+        if (extensionDisposed) {
+          return;
+        }
+        if (!apiKey) {
+          outputChannel.appendLine('[boxlite] No BOXLITE_API_KEY found. Prompting sign in on first use.');
+        } else {
+          outputChannel.appendLine(`[boxlite] Authenticated with API key: ${CredentialsManager.redactKey(apiKey)}`);
+        }
+      } catch {
+        // Ignore transient startup credential warm-up errors
+      }
+
       if (extensionDisposed) {
         return;
       }
-      if (!apiKey) {
-        outputChannel.appendLine('[boxlite] No BOXLITE_API_KEY found. Prompting sign in on first use.');
-      } else {
-        outputChannel.appendLine(`[boxlite] Authenticated with API key: ${CredentialsManager.redactKey(apiKey)}`);
+
+      for (const provider of allProviders) {
+        provider.setStartupReady(true);
       }
-    } catch {
-      // Ignore transient startup credential warm-up errors
-    }
 
-    if (extensionDisposed) {
-      return;
-    }
+      accountProvider.refresh();
+      treeProvider.refresh();
 
-    for (const provider of allProviders) {
-      provider.setStartupReady(true);
-    }
-
-    accountProvider.refresh();
-    secretsProvider.refresh();
-    treeProvider.refresh();
-    imagesProvider.refresh();
-    volumesProvider.refresh();
-    checkpointsProvider.refresh();
+      scheduleStartupStep(() => {
+        domainsProvider.refresh();
+        secretsProvider.refresh();
+        imagesProvider.refresh();
+        volumesProvider.refresh();
+        checkpointsProvider.refresh();
+      }, 75);
+    }, 50);
   }, startupDelayMs);
 }
 
 export function deactivate() {
-  if (startupTimer) {
-    clearTimeout(startupTimer);
-    startupTimer = undefined;
-  }
+  clearPendingStartupTimers();
 }
