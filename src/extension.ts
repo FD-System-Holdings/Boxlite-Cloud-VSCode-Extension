@@ -207,6 +207,12 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(accountTreeView);
 
+  const secretsTreeView = vscode.window.createTreeView('boxlite.secretsView', {
+    treeDataProvider: secretsProvider,
+    showCollapseAll: true
+  });
+  context.subscriptions.push(secretsTreeView);
+
   const treeView = vscode.window.createTreeView('boxlite.boxesView', {
     treeDataProvider: treeProvider,
     showCollapseAll: true
@@ -230,12 +236,6 @@ export async function activate(context: vscode.ExtensionContext) {
     showCollapseAll: true
   });
   context.subscriptions.push(checkpointsTreeView);
-
-  const secretsTreeView = vscode.window.createTreeView('boxlite.secretsView', {
-    treeDataProvider: secretsProvider,
-    showCollapseAll: true
-  });
-  context.subscriptions.push(secretsTreeView);
 
   const deployer = new BoxLiteDeployer(
     bridge,
